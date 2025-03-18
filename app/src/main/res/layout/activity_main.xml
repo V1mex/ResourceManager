@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="16dp">
+
+    <TextView
+        android:id="@+id/info_label"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="CPU та RAM"
+        android:textSize="18sp"
+        android:textStyle="bold" />
+
+    <ListView
+        android:id="@+id/process_list"
+        android:layout_width="match_parent"
+        android:layout_height="516dp"
+        android:divider="@android:color/darker_gray"
+        android:dividerHeight="1dp" />
+
+    <Button
+        android:id="@+id/close_btn"
+        android:layout_width="373dp"
+        android:layout_height="wrap_content"
+        android:text="Close" />
+
+    <Switch
+        android:id="@+id/freeze_switch"
+        android:layout_width="match_parent"
+        android:layout_height="55dp"
+        android:text="Freeze"
+        android:textSize="20sp" />
+
+</LinearLayout>
