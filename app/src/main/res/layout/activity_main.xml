@@ -13,24 +13,63 @@
         android:textSize="18sp"
         android:textStyle="bold" />
 
-    <ListView
-        android:id="@+id/process_list"
+    <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="516dp"
-        android:divider="@android:color/darker_gray"
-        android:dividerHeight="1dp" />
-
-    <Button
-        android:id="@+id/close_btn"
-        android:layout_width="373dp"
         android:layout_height="wrap_content"
-        android:text="Close" />
+        android:orientation="horizontal"
+        android:layout_marginTop="8dp">
+
+        <Spinner
+            android:id="@+id/sortSpinner"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1.5"
+            android:background="@android:drawable/edit_text" />
+
+        <Spinner
+            android:id="@+id/orderSpinner"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:background="@android:drawable/edit_text" />
+
+        <Spinner
+            android:id="@+id/searchSpinner"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1.7"
+            android:background="@android:drawable/edit_text" />
+    </LinearLayout>
+
+    <EditText
+        android:id="@+id/searchField"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:layout_marginTop="8dp"
+        android:hint="Search by PID or Name" />
 
     <Switch
         android:id="@+id/freeze_switch"
-        android:layout_width="match_parent"
-        android:layout_height="55dp"
+        android:layout_width="wrap_content"
+        android:layout_height="48dp"
+        android:layout_marginTop="8dp"
         android:text="Freeze"
         android:textSize="20sp" />
+
+    <ListView
+        android:id="@+id/process_list"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:divider="@android:color/darker_gray"
+        android:dividerHeight="1dp"
+        android:layout_marginTop="8dp" />
+
+    <Button
+        android:id="@+id/close_btn"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:text="Finish this activity" />
 
 </LinearLayout>
