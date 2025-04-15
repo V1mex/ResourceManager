@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:padding="16dp">
+
+    <!-- Назва команди (cmd) -->
+
+    <!-- PID -->
+
+    <TextView
+        android:id="@+id/cmd_text"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textAlignment="center"
+        android:textColor="@android:color/black"
+        android:textSize="18sp"
+        android:textStyle="bold"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent" />
+
+    <!-- User -->
+
+    <!-- CPU -->
+
+    <!-- Memory -->
+
+    <!-- Uptime -->
+
+    <TextView
+        android:id="@+id/pid_text"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:textColor="@android:color/darker_gray"
+        android:textSize="17sp"
+        app:layout_constraintStart_toStartOf="@+id/cmd_text"
+        app:layout_constraintTop_toBottomOf="@+id/cmd_text" />
+
+    <TextView
+        android:id="@+id/user_text"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:textColor="@android:color/darker_gray"
+        android:textSize="17sp"
+        app:layout_constraintEnd_toStartOf="@+id/cpu_text"
+        app:layout_constraintStart_toEndOf="@+id/pid_text"
+        app:layout_constraintTop_toTopOf="@+id/pid_text" />
+
+    <TextView
+        android:id="@+id/cpu_text"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:textColor="@android:color/darker_gray"
+        android:textSize="17sp"
+        app:layout_constraintEnd_toEndOf="@+id/cmd_text"
+        app:layout_constraintTop_toTopOf="@+id/user_text" />
+
+    <TextView
+        android:id="@+id/mem_text"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:textColor="@android:color/darker_gray"
+        android:textSize="17sp"
+        app:layout_constraintEnd_toStartOf="@+id/uptime_text"
+        app:layout_constraintStart_toStartOf="@+id/pid_text"
+        app:layout_constraintTop_toBottomOf="@+id/pid_text" />
+
+    <TextView
+        android:id="@+id/uptime_text"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:textColor="@android:color/darker_gray"
+        android:textSize="17sp"
+        app:layout_constraintEnd_toEndOf="@+id/cpu_text"
+        app:layout_constraintStart_toEndOf="@+id/mem_text"
+        app:layout_constraintTop_toTopOf="@+id/mem_text" />
+
+</androidx.constraintlayout.widget.ConstraintLayout>

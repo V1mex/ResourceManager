@@ -1,13 +1,14 @@
 package com.example.resourcemanager
 
 import android.content.Context
+import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.ArrayAdapter
 import android.widget.TextView
 
 class ProcessAdapter(context: Context, private val processes: MutableList<ProcessInfo>) :
-    ArrayAdapter<ProcessInfo>(context, android.R.layout.simple_list_item_1, processes) {
+    ArrayAdapter<ProcessInfo>(context, R.layout.list_item, processes) {
 
     private var filteredProcesses = mutableListOf<ProcessInfo>()
     var searchType: String = "pid"
@@ -17,9 +18,25 @@ class ProcessAdapter(context: Context, private val processes: MutableList<Proces
     }
 
     override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
-        val view = super.getView(position, convertView, parent)
+        val view = convertView ?: LayoutInflater.from(context).inflate(R.layout.list_item, parent, false)
         val process = filteredProcesses[position]
-        (view as TextView).text = "PID: ${process.pid}, CMD: ${process.cmd}, CPU: ${process.cpu}%, MEM: ${process.mem}%, Uptime: ${formatUptime(process.uptime)}"
+
+        // Знаходимо TextView у макеті
+        val cmdText = view.findViewById<TextView>(R.id.cmd_text)
+        val pidText = view.findViewById<TextView>(R.id.pid_text)
+        val userText = view.findViewById<TextView>(R.id.user_text)
+        val cpuText = view.findViewById<TextView>(R.id.cpu_text)
+        val memText = view.findViewById<TextView>(R.id.mem_text)
+        val uptimeText = view.findViewById<TextView>(R.id.uptime_text)
+
+        // Заповнюємо TextView даними
+        cmdText.text = process.cmd
+        pidText.text = "PID: ${process.pid}"
+        userText.text = "User: ${process.user}"
+        cpuText.text = "CPU: ${process.cpu}%"
+        memText.text = "Memory: ${process.mem}%"
+        uptimeText.text = "Uptime: ${formatUptime(process.uptime)}"
+
         return view
     }
 

@@ -13,149 +13,518 @@ import android.view.View
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.lifecycleScope
 import com.example.resourcemanager.databinding.ActivityProcessDetailBinding
 import kotlinx.coroutines.*
 import java.io.BufferedReader
 import java.io.InputStreamReader
+
+
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+
+import java.util.regex.Pattern // Потрібен імпорт для Pattern
+
+
 
 class ProcessDetailActivity : ComponentActivity() {
     private lateinit var binding: ActivityProcessDetailBinding
     private val scope = CoroutineScope(Dispatchers.IO)
     private var processInfo: ProcessInfo? = null
     private var packageName: String? = null // Зберігаємо packageName
+    // Додайте цю константу до класу
+    companion object {
+        private const val TAG = "BatteryUsage" // Тег для логів
+    }
+    data class SourceData(
+        val time: String,
+        val batteryPercentage: String,
+        val batteryMah: String // Нове поле для mAh (наприклад, "0.12 mAh" або "N/A")
+    )
 
+    private fun calculatePercentage(mah: String, totalMah: Double): Pair<String, String> {
+        val mahValue = mah.toDoubleOrNull() ?: 0.0
+        return if (mahValue > 0 && totalMah > 0) {
+            val percentage = String.format("%.4f%%", (mahValue / totalMah) * 100)
+            val mahFormatted = String.format("%.4f mAh", mahValue)
+            Pair(percentage, mahFormatted)
+        } else {
+            Pair("N/A", "N/A")
+        }
+    }
+    // Ваша існуюча функція getUidForPackage
     private fun getUidForPackage(packageName: String): String? {
+        // ... (код залишається без змін, але переконайтеся, що логування помилок там є)
         return try {
-            val process = Runtime.getRuntime().exec("su -c pm list packages -U")
+            val process = Runtime.getRuntime().exec("su -c pm list packages -U") // Краще додати --user 0, якщо можливо?
             val reader = BufferedReader(InputStreamReader(process.inputStream))
+            val errorReader = BufferedReader(InputStreamReader(process.errorStream)) // Додано читання помилок
             val output = reader.readText()
+            val errorOutput = errorReader.readText() // Додано читання помилок
             reader.close()
-            val packageLine = output.lines().find { it.contains(packageName) }
-            packageLine?.substringAfter("uid:")?.trim()
+            errorReader.close()
+            val exitCode = process.waitFor()
+
+            if (exitCode != 0 || errorOutput.isNotBlank()) {
+                Log.e(TAG, "pm list packages command failed. Exit code: $exitCode, Error: $errorOutput")
+                // Можна спробувати іншу команду, якщо ця не працює, наприклад "dumpsys package $packageName | grep uid:"
+            }
+
+            // Шукаємо рядок, що містить ім'я пакету
+            val packageLine = output.lines().find { it.contains(packageName) && it.contains("uid:") } // Шукаємо uid: замість uid:
+
+            if (packageLine != null) {
+                // Витягуємо UID з uid:xxxx
+                val uidMatch = Regex("uid:(\\d+)").find(packageLine)
+                val foundUid = uidMatch?.groupValues?.getOrNull(1)
+                if (foundUid != null) {
+                    Log.d(TAG,"Extracted UID $foundUid from line: $packageLine")
+                    return foundUid
+                } else {
+                    Log.w(TAG,"Found line for $packageName but failed to extract userId: $packageLine")
+                    // Спробуємо старий метод як запасний?
+                    return packageLine.substringAfter("uid:")?.trim()?.takeIf { it.isNotEmpty() }
+                }
+            } else {
+                Log.w(TAG, "Could not find line containing '$packageName' and 'uid:' in pm list output.")
+                // Можна спробувати запасний метод пошуку UID тут
+                return null
+            }
         } catch (e: Exception) {
-            Log.e("BatteryUsage", "Error getting UID for $packageName: ${e.message}")
+            Log.e(TAG, "Error getting UID for $packageName: ${e.message}", e)
             null
         }
     }
 
-    private fun getBatteryUsageAndTime(packageName: String?): Pair<String, String> {
+    private suspend fun getBatteryUsageAndTime(packageName: String?): Pair<String, Map<String, SourceData>> = withContext(Dispatchers.IO) {
         if (packageName == null) {
-            Log.d("BatteryUsage", "PackageName is null")
-            return Pair("N/A", "N/A")
+            Log.w(TAG, "PackageName is null, cannot get battery usage.")
+            return@withContext Pair("N/A", emptyMap())
         }
+        Log.d(TAG, "Attempting to get battery usage for package: $packageName")
 
-        Log.d("BatteryUsage", "Getting UID for package: $packageName")
         val uid = getUidForPackage(packageName)
-        Log.d("BatteryUsage", "UID for $packageName: $uid")
-
         if (uid == null) {
-            Log.d("BatteryUsage", "UID is null")
-            return Pair("N/A", "N/A")
+            Log.w(TAG, "Could not retrieve UID for package: $packageName")
+            return@withContext Pair("N/A", emptyMap())
         }
+        Log.i(TAG, "Found UID for $packageName: $uid")
 
-        return try {
+        val formattedUid = if (uid.startsWith("10") && uid.length >= 5) {
+            "u0a${uid.substring(2)}"
+        } else {
+            uid
+        }
+        Log.d(TAG, "Formatted UID for dumpsys: $formattedUid")
+
+        var output: String
+        try {
             val process = Runtime.getRuntime().exec("su -c dumpsys batterystats --charged")
             val reader = BufferedReader(InputStreamReader(process.inputStream))
-            val output = reader.readText()
+            val errorReader = BufferedReader(InputStreamReader(process.errorStream))
+            val outputBuilder = StringBuilder()
+            var line: String?
+            while (reader.readLine().also { line = it } != null) {
+                outputBuilder.append(line).append("\n")
+            }
+            output = outputBuilder.toString()
+            val errorOutput = errorReader.readText()
             reader.close()
-
-            Log.d("BatteryUsage", "dumpsys batterystats output length: ${output.length}")
-
-            var totalMah = 0.0
-            var appMah = "N/A"
-            var appTime = "N/A"
-            var timeFound = false
-
-            output.lines().forEach { line ->
-                if (line.contains("Computed drain:")) {
-                    totalMah = line.substringAfter("Computed drain:").substringBefore(",").trim().toDoubleOrNull() ?: 0.0
-                    Log.d("BatteryUsage", "Total computed drain: $totalMah mAh")
-                }
-
-                val uidPattern = "UID u0a${uid.substringAfter("10")}:"
-                val uidPatternUpper = uidPattern.uppercase()
-
-                if (line.uppercase().contains(uidPatternUpper)) {
-                    Log.d("BatteryUsage", "Found line possibly containing info for UID $uid: $line")
-
-                    if (appMah == "N/A") {
-                        val mahMatch = Regex("\\d+(\\.\\d+)?").find(line.substringAfter(":"))?.value
-                        if (mahMatch != null) {
-                            appMah = mahMatch
-                            Log.d("BatteryUsage", "Found appMah for UID $uid: $appMah from line: $line")
-                        }
-                    }
-
-                    if (!timeFound) {
-                        Log.d("BatteryUsage", "Attempting to parse time from the same line for UID $uid")
-                        if (line.contains("foreground", ignoreCase = true) && line.contains("time=", ignoreCase = true)) {
-                            val timeValue = line.substringAfter("time=").substringBefore(" ").trim()
-                            Log.d("BatteryUsage", "Raw foreground time from line: $timeValue")
-                            appTime = formatBatteryTime(timeValue)
-                            Log.d("BatteryUsage", "Parsed foreground time: $appTime")
-                            if (appTime != "N/A") timeFound = true
-                        } else {
-                            val fgKey = when {
-                                line.contains(" fg:", ignoreCase = true) -> "fg:"
-                                line.contains(" fgs:", ignoreCase = true) -> "fgs:"
-                                else -> null
-                            }
-
-                            if (fgKey != null) {
-                                Log.d("BatteryUsage", "Found '$fgKey' in line: $line")
-                                val timeMatch = Regex("\\((\\d+h\\s*)?(\\d+m\\s*)?(\\d+s\\s*)?(\\d+ms)?\\)").find(line.substringAfter(fgKey))
-                                if (timeMatch != null) {
-                                    Log.d("BatteryUsage", "Found time match in parentheses: ${timeMatch.value}")
-                                    var totalMs = 0L
-                                    timeMatch.groups.filterNotNull().drop(1).forEach { group ->
-                                        val valueString = group.value.filter { it.isDigit() }
-                                        val value = valueString.toLongOrNull() ?: 0L
-                                        when {
-                                            group.value.contains("h") -> totalMs += value * 3600 * 1000
-                                            group.value.contains("m") -> totalMs += value * 60 * 1000
-                                            group.value.contains("s") -> totalMs += value * 1000
-                                            group.value.contains("ms") -> totalMs += value
-                                        }
-                                    }
-                                    Log.d("BatteryUsage", "Total ms from parentheses: $totalMs")
-                                    if (totalMs > 0) {
-                                        appTime = formatBatteryTimeMs(totalMs)
-                                        Log.d("BatteryUsage", "Parsed $fgKey time from parentheses: $appTime")
-                                        timeFound = true
-                                    } else if (!timeFound) {
-                                        appTime = "0s"
-                                        Log.d("BatteryUsage", "$fgKey time from parentheses is zero")
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+            errorReader.close()
+            val exitCode = process.waitFor()
+            if (exitCode != 0) {
+                Log.e(TAG, "dumpsys command failed with exit code $exitCode. Error output: $errorOutput")
+                return@withContext Pair("N/A", emptyMap())
             }
-
-            if (!timeFound && appMah != "N/A") {
-                Log.d("BatteryUsage", "Time not found after parsing, setting to 0s")
-                appTime = "0s"
+            if (output.isBlank()) {
+                Log.e(TAG, "dumpsys command returned empty output. Error output: $errorOutput")
+                return@withContext Pair("N/A", emptyMap())
             }
-
-            val percentage = if (appMah != "N/A" && appMah != "0.0" && totalMah > 0) {
-                val mahValue = appMah.toDoubleOrNull() ?: 0.0
-                if (mahValue > 0) String.format("%.1f%%", (mahValue / totalMah) * 100) else "0.0%"
-            } else if (appMah == "0.0") {
-                "0.0%"
-            } else {
-                "N/A"
-            }
-
-            binding.settingsButton.visibility = View.VISIBLE
-            Log.d("BatteryUsage", "Final result: percentage=$percentage, time=$appTime")
-            Pair(percentage, appTime)
-
+            Log.d(TAG, "dumpsys batterystats output length: ${output.length}")
         } catch (e: Exception) {
-            Log.e("BatteryUsage", "Error in getBatteryUsageAndTime: ${e.message}", e)
-            Pair("N/A", "N/A")
+            Log.e(TAG, "Error executing or reading dumpsys command for $packageName: ${e.message}", e)
+            return@withContext Pair("N/A", emptyMap())
         }
 
+        try {
+            var totalMah = 0.0
+            var appMah = "N/A"
+            val sourceData = mutableMapOf<String, SourceData>().apply {
+                put("CPU Foreground Services", SourceData("N/A", "N/A", "N/A"))
+                put("CPU Foreground", SourceData("N/A", "N/A", "N/A"))
+                put("CPU Background", SourceData("N/A", "N/A", "N/A"))
+                put("Foreground Services", SourceData("N/A", "N/A", "N/A"))
+                put("Foreground Activities", SourceData("N/A", "N/A", "N/A"))
+                put("Wakelock", SourceData("N/A", "N/A", "N/A"))
+                put("Sensors", SourceData("N/A", "N/A", "N/A"))
+                put("Network Usage", SourceData("N/A", "N/A", "N/A"))
+                put("JobScheduler", SourceData("N/A", "N/A", "N/A"))
+                put("Sync", SourceData("N/A", "N/A", "N/A"))
+                put("Alarms", SourceData("N/A", "N/A", "N/A"))
+                put("Top", SourceData("N/A", "N/A", "N/A"))
+            }
+            var foundUidSection = false
+            var processedLinesInUidSection = 0
+            var inEstimatedPowerSection = false
+            var processingUid = false
+
+            // Знаходимо загальне споживання
+            val totalDrainMatch = Regex("Computed drain: (\\d+\\.?\\d*),").find(output)
+            if (totalDrainMatch != null && totalDrainMatch.groupValues.size > 1) {
+                totalMah = totalDrainMatch.groupValues[1].toDoubleOrNull() ?: 0.0
+                Log.i(TAG, "Total computed drain: $totalMah mAh")
+            } else {
+                Log.w(TAG, "Could not find 'Computed drain:' in dumpsys output.")
+            }
+
+            // Регулярні вирази
+            val uidPatterns = listOf(
+                Regex("^\\s*UID ${Regex.escape(formattedUid)}:", RegexOption.IGNORE_CASE),
+                Regex("^\\s*${Regex.escape(formattedUid)}:", RegexOption.IGNORE_CASE)
+            )
+            val mahPattern = Regex("(\\d*\\.\\d+)|(\\d+)\\s*(?:mah|\\(calculated\\)|drain)", RegexOption.IGNORE_CASE)
+            val timePatternHmsMs = Regex("(\\d+d)?\\s*(\\d+h)?\\s*(\\d+m)?\\s*(\\d+s)?\\s*(\\d+ms)?", RegexOption.IGNORE_CASE)
+
+            Log.d(TAG, "Starting line-by-line parsing of dumpsys output for UID $formattedUid...")
+            val lines = output.lines()
+
+            for (i in lines.indices) {
+                val currentLine = lines[i]
+                var isUidStartLine = false
+
+                if (currentLine.contains("Estimated power use (mAh):", ignoreCase = true)) {
+                    inEstimatedPowerSection = true
+                    Log.d(TAG, "Entered Estimated power use section at line $i")
+                } else if (inEstimatedPowerSection && currentLine.trim().isEmpty()) {
+                    inEstimatedPowerSection = false
+                    Log.d(TAG, "Exited Estimated power use section at line $i")
+                }
+
+                if (!foundUidSection) {
+                    for (pattern in uidPatterns) {
+                        if (pattern.containsMatchIn(currentLine)) {
+                            foundUidSection = true
+                            isUidStartLine = true
+                            processingUid = true
+                            processedLinesInUidSection = 0
+                            Log.i(TAG, ">>> Found START of UID $formattedUid section at line $i: '$currentLine'")
+                            break
+                        }
+                    }
+                }
+
+                if (foundUidSection) {
+                    if (processedLinesInUidSection < 50 || currentLine.contains("Foreground", ignoreCase = true) || currentLine.contains("mah", ignoreCase = true)) {
+                        Log.v(TAG, "    [UID $formattedUid Section Line $processedLinesInUidSection]: '$currentLine'")
+                    }
+                    processedLinesInUidSection++
+
+                    if (inEstimatedPowerSection) {
+                        val isDifferentUidSectionStart = !isUidStartLine && uidPatterns.any { it.containsMatchIn(currentLine.replace(formattedUid, "different")) }
+                        if (!isUidStartLine && (!currentLine.startsWith(" ") || isDifferentUidSectionStart)) {
+                            Log.i(TAG, "<<< Heuristic END of UID $formattedUid section detected at line $i: '$currentLine'")
+                            foundUidSection = false
+                            processingUid = false
+                            continue
+                        }
+                    } else {
+                        val isNewUidSection = !isUidStartLine && uidPatterns.any { it.containsMatchIn(currentLine.replace(formattedUid, "different")) }
+                        if (!isUidStartLine && (isNewUidSection || currentLine.trim().startsWith(formattedUid.plus(":").replace("u0a196:", "u0a197:")))) {
+                            Log.i(TAG, "<<< Detailed UID $formattedUid section ended at line $i: '$currentLine'")
+                            foundUidSection = false
+                            processingUid = false
+                            continue
+                        }
+                    }
+
+                    // Пошук mAh (загальне)
+                    if (appMah == "N/A" && inEstimatedPowerSection) {
+                        val mahMatch = mahPattern.find(currentLine)
+                        if (mahMatch != null) {
+                            val matchedValue = mahMatch.groupValues[1].takeIf { it.isNotEmpty() } ?: mahMatch.groupValues[2]
+                            if (matchedValue.isNotEmpty()) {
+                                appMah = matchedValue
+                                Log.i(TAG, "    +++ Found appMah: $appMah in line: '$currentLine'")
+                            }
+                        }
+                    }
+
+                    // Пошук cpu:fgs
+                    if (currentLine.contains("cpu:fgs=", ignoreCase = true)) {
+                        val timeString = currentLine.substringAfter("cpu:fgs=").substringAfter("(").substringBefore(")")
+                        val batteryString = currentLine.substringAfter("fgs:").substringBefore("(").trim()
+                        Log.d(TAG, "    ??? Extracted time string for cpu:fgs: '$timeString'")
+                        val timeMatch = timePatternHmsMs.find(timeString)
+                        if (timeMatch != null) {
+                            val parsedMs = parseTimeFromHmsMs(timeMatch)
+                            if (parsedMs > 0) {
+                                val (percentage, mahFormatted) = calculatePercentage(batteryString, totalMah)
+                                sourceData["CPU Foreground Services"] = SourceData(
+                                    time = formatBatteryTimeMs(parsedMs),
+                                    batteryPercentage = percentage,
+                                    batteryMah = mahFormatted
+                                )
+                                Log.i(TAG, "    +++ Parsed cpu:fgs: time=${sourceData["CPU Foreground Services"]!!.time}, batteryPercentage=${percentage}, batteryMah=${mahFormatted}")
+                            }
+                        }
+                    }
+
+                    // Пошук cpu:fg
+                    if (currentLine.contains("cpu:fg=", ignoreCase = true)) {
+                        val timeString = currentLine.substringAfter("cpu:fg=").substringAfter("(").substringBefore(")")
+                        val batteryString = currentLine.substringAfter("fg:").substringBefore("(").trim()
+                        Log.d(TAG, "    ??? Extracted time string for cpu:fg: '$timeString'")
+                        val timeMatch = timePatternHmsMs.find(timeString)
+                        if (timeMatch != null) {
+                            val parsedMs = parseTimeFromHmsMs(timeMatch)
+                            if (parsedMs > 0) {
+                                val (percentage, mahFormatted) = calculatePercentage(batteryString, totalMah)
+                                sourceData["CPU Foreground"] = SourceData(
+                                    time = formatBatteryTimeMs(parsedMs),
+                                    batteryPercentage = percentage,
+                                    batteryMah = mahFormatted
+                                )
+                                Log.i(TAG, "    +++ Parsed cpu:fg: time=${sourceData["CPU Foreground"]!!.time}, batteryPercentage=${percentage}, batteryMah=${mahFormatted}")
+                            }
+                        }
+                    }
+
+                    // Пошук cpu:bg
+                    if (currentLine.contains("cpu:bg=", ignoreCase = true)) {
+                        val timeString = currentLine.substringAfter("cpu:bg=").substringAfter("(").substringBefore(")")
+                        val batteryString = currentLine.substringAfter("bg:").substringBefore("(").trim()
+                        Log.d(TAG, "    ??? Extracted time string for cpu:bg: '$timeString'")
+                        val timeMatch = timePatternHmsMs.find(timeString)
+                        if (timeMatch != null) {
+                            val parsedMs = parseTimeFromHmsMs(timeMatch)
+                            if (parsedMs > 0) {
+                                val (percentage, mahFormatted) = calculatePercentage(batteryString, totalMah)
+                                sourceData["CPU Background"] = SourceData(
+                                    time = formatBatteryTimeMs(parsedMs),
+                                    batteryPercentage = percentage,
+                                    batteryMah = mahFormatted
+                                )
+                                Log.i(TAG, "    +++ Parsed cpu:bg: time=${sourceData["CPU Background"]!!.time}, batteryPercentage=${percentage}, batteryMah=${mahFormatted}")
+                            }
+                        }
+                    }
+                }
+
+                // Пошук Foreground services
+                if (processingUid && currentLine.contains("Foreground services:", ignoreCase = true)) {
+                    Log.d(TAG, "    ??? Searching for time in Foreground services line: '$currentLine'")
+                    val timeString = currentLine.substringAfter("Foreground services:").substringBefore("realtime").trim()
+                    Log.d(TAG, "    ??? Extracted time string for Foreground services: '$timeString'")
+                    val timeMatch = timePatternHmsMs.find(timeString)
+                    if (timeMatch != null) {
+                        val parsedMs = parseTimeFromHmsMs(timeMatch)
+                        if (parsedMs > 0) {
+                            sourceData["Foreground Services"] = SourceData(
+                                time = formatBatteryTimeMs(parsedMs),
+                                batteryPercentage = "N/A",
+                                batteryMah = "N/A"
+                            )
+                            Log.i(TAG, "    +++ Parsed Foreground services: time=${sourceData["Foreground Services"]!!.time}")
+                        }
+                    }
+                }
+
+                // Пошук Foreground activities
+                if (processingUid && currentLine.contains("Foreground activities:", ignoreCase = true)) {
+                    Log.d(TAG, "    ??? Searching for time in Foreground activities line: '$currentLine'")
+                    val timeString = currentLine.substringAfter("Foreground activities:").substringBefore("realtime").trim()
+                    Log.d(TAG, "    ??? Extracted time string for Foreground activities: '$timeString'")
+                    val timeMatch = timePatternHmsMs.find(timeString)
+                    if (timeMatch != null) {
+                        val parsedMs = parseTimeFromHmsMs(timeMatch)
+                        if (parsedMs > 0) {
+                            sourceData["Foreground Activities"] = SourceData(
+                                time = formatBatteryTimeMs(parsedMs),
+                                batteryPercentage = "N/A",
+                                batteryMah = "N/A"
+                            )
+                            Log.i(TAG, "    +++ Parsed Foreground activities: time=${sourceData["Foreground Activities"]!!.time}")
+                        }
+                    }
+                }
+
+                // Пошук wakelock
+                if (processingUid && currentLine.contains("wakelock=", ignoreCase = true)) {
+                    val timeString = currentLine.substringAfter("wakelock=").substringAfter("(").substringBefore(")")
+                    val batteryString = currentLine.substringAfter("wakelock=").substringBefore("(").trim()
+                    Log.d(TAG, "    ??? Extracted time string for wakelock: '$timeString'")
+                    val timeMatch = timePatternHmsMs.find(timeString)
+                    if (timeMatch != null) {
+                        val parsedMs = parseTimeFromHmsMs(timeMatch)
+                        if (parsedMs > 0) {
+                            val (percentage, mahFormatted) = calculatePercentage(batteryString, totalMah)
+                            sourceData["Wakelock"] = SourceData(
+                                time = formatBatteryTimeMs(parsedMs),
+                                batteryPercentage = percentage,
+                                batteryMah = mahFormatted
+                            )
+                            Log.i(TAG, "    +++ Parsed wakelock: time=${sourceData["Wakelock"]!!.time}, batteryPercentage=${percentage}, batteryMah=${mahFormatted}")
+                        }
+                    }
+                }
+
+                // Пошук sensors
+                if (processingUid && currentLine.contains("sensors=", ignoreCase = true)) {
+                    val timeString = currentLine.substringAfter("sensors=").substringAfter("(").substringBefore(")")
+                    val batteryString = currentLine.substringAfter("sensors=").substringBefore("(").trim()
+                    Log.d(TAG, "    ??? Extracted time string for sensors: '$timeString'")
+                    val timeMatch = timePatternHmsMs.find(timeString)
+                    if (timeMatch != null) {
+                        val parsedMs = parseTimeFromHmsMs(timeMatch)
+                        if (parsedMs > 0) {
+                            val (percentage, mahFormatted) = calculatePercentage(batteryString, totalMah)
+                            sourceData["Sensors"] = SourceData(
+                                time = formatBatteryTimeMs(parsedMs),
+                                batteryPercentage = percentage,
+                                batteryMah = mahFormatted
+                            )
+                            Log.i(TAG, "    +++ Parsed sensors: time=${sourceData["Sensors"]!!.time}, batteryPercentage=${percentage}, batteryMah=${mahFormatted}")
+                        }
+                    }
+                }
+
+                // Пошук Network usage (wifi або mobile)
+                if (processingUid && currentLine.contains("wifi=", ignoreCase = true)) {
+                    val timeString = currentLine.substringAfter("wifi=").substringAfter("(").substringBefore(")")
+                    val batteryString = currentLine.substringAfter("wifi=").substringBefore("(").trim()
+                    Log.d(TAG, "    ??? Extracted time string for wifi: '$timeString'")
+                    val timeMatch = timePatternHmsMs.find(timeString)
+                    if (timeMatch != null) {
+                        val parsedMs = parseTimeFromHmsMs(timeMatch)
+                        if (parsedMs > 0) {
+                            val (percentage, mahFormatted) = calculatePercentage(batteryString, totalMah)
+                            sourceData["Network Usage"] = SourceData(
+                                time = formatBatteryTimeMs(parsedMs),
+                                batteryPercentage = percentage,
+                                batteryMah = mahFormatted
+                            )
+                            Log.i(TAG, "    +++ Parsed wifi: time=${sourceData["Network Usage"]!!.time}, batteryPercentage=${percentage}, batteryMah=${mahFormatted}")
+                        }
+                    }
+                }
+
+                // Пошук JobScheduler
+                if (processingUid && currentLine.contains("Job completions:", ignoreCase = true)) {
+                    val timeString = currentLine.substringAfter("Job completions:").substringBefore("(").trim()
+                    Log.d(TAG, "    ??? Extracted time string for JobScheduler: '$timeString'")
+                    val timeMatch = timePatternHmsMs.find(timeString)
+                    if (timeMatch != null) {
+                        val parsedMs = parseTimeFromHmsMs(timeMatch)
+                        if (parsedMs > 0) {
+                            sourceData["JobScheduler"] = SourceData(
+                                time = formatBatteryTimeMs(parsedMs),
+                                batteryPercentage = "N/A",
+                                batteryMah = "N/A"
+                            )
+                            Log.i(TAG, "    +++ Parsed JobScheduler: time=${sourceData["JobScheduler"]!!.time}")
+                        }
+                    }
+                }
+
+                // Пошук Sync
+                if (processingUid && currentLine.contains("Sync:", ignoreCase = true)) {
+                    val timeString = currentLine.substringAfter("Sync:").substringBefore("(").trim()
+                    Log.d(TAG, "    ??? Extracted time string for Sync: '$timeString'")
+                    val timeMatch = timePatternHmsMs.find(timeString)
+                    if (timeMatch != null) {
+                        val parsedMs = parseTimeFromHmsMs(timeMatch)
+                        if (parsedMs > 0) {
+                            sourceData["Sync"] = SourceData(
+                                time = formatBatteryTimeMs(parsedMs),
+                                batteryPercentage = "N/A",
+                                batteryMah = "N/A"
+                            )
+                            Log.i(TAG, "    +++ Parsed Sync: time=${sourceData["Sync"]!!.time}")
+                        }
+                    }
+                }
+
+                // Пошук Alarms
+                if (processingUid && currentLine.contains("Alarm:", ignoreCase = true)) {
+                    val timeString = currentLine.substringAfter("Alarm:").substringBefore("(").trim()
+                    Log.d(TAG, "    ??? Extracted time string for Alarms: '$timeString'")
+                    val timeMatch = timePatternHmsMs.find(timeString)
+                    if (timeMatch != null) {
+                        val parsedMs = parseTimeFromHmsMs(timeMatch)
+                        if (parsedMs > 0) {
+                            sourceData["Alarms"] = SourceData(
+                                time = formatBatteryTimeMs(parsedMs),
+                                batteryPercentage = "N/A",
+                                batteryMah = "N/A"
+                            )
+                            Log.i(TAG, "    +++ Parsed Alarms: time=${sourceData["Alarms"]!!.time}")
+                        }
+                    }
+                }
+
+                // Пошук Top
+                if (processingUid && currentLine.contains("top:", ignoreCase = true)) {
+                    val timeString = currentLine.substringAfter("top:").substringBefore("(").trim()
+                    Log.d(TAG, "    ??? Extracted time string for Top: '$timeString'")
+                    val timeMatch = timePatternHmsMs.find(timeString)
+                    if (timeMatch != null) {
+                        val parsedMs = parseTimeFromHmsMs(timeMatch)
+                        if (parsedMs > 0) {
+                            sourceData["Top"] = SourceData(
+                                time = formatBatteryTimeMs(parsedMs),
+                                batteryPercentage = "N/A",
+                                batteryMah = "N/A"
+                            )
+                            Log.i(TAG, "    +++ Parsed Top: time=${sourceData["Top"]!!.time}")
+                        }
+                    }
+                }
+            }
+            Log.d(TAG, "Finished line-by-line parsing.")
+
+            // Форматування загального відсотка
+            val percentage: String
+            if (appMah != "N/A" && totalMah > 0) {
+                val mahValue = appMah.toDoubleOrNull() ?: 0.0
+                percentage = if (mahValue > 0) String.format("%.1f%%", (mahValue / totalMah) * 100) else "0.0%"
+                Log.d(TAG, "Calculating percentage: $mahValue / $totalMah * 100")
+            } else {
+                percentage = "N/A"
+                Log.w(TAG, "Percentage is N/A. appMah: $appMah, totalMah: $totalMah")
+            }
+
+            Log.i(TAG, "Final result for $packageName (UID $formattedUid): Percentage=$percentage, Sources=$sourceData")
+            return@withContext Pair(percentage, sourceData)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error parsing dumpsys output for $packageName: ${e.message}", e)
+            return@withContext Pair("N/A", emptyMap())
+        }
+    }
+
+
+    private fun parseTimeFromHmsMs(matchResult: MatchResult): Long {
+        var totalMs = 0L
+        try {
+            for (i in 1 until matchResult.groups.size) {
+                val group = matchResult.groups[i]
+                if (group != null) {
+                    val valueString = group.value.filter { it.isDigit() }
+                    val value = valueString.toLongOrNull() ?: 0L
+                    when {
+                        group.value.contains("d", ignoreCase = true) -> totalMs += value * 24 * 3600 * 1000
+                        group.value.contains("h", ignoreCase = true) -> totalMs += value * 3600 * 1000
+                        group.value.contains("m", ignoreCase = true) && !group.value.contains("ms", ignoreCase = true) -> totalMs += value * 60 * 1000
+                        group.value.contains("s", ignoreCase = true) && !group.value.contains("ms", ignoreCase = true) -> totalMs += value * 1000
+                        group.value.contains("ms", ignoreCase = true) -> totalMs += value
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error parsing time from HMSMS format: ${matchResult.value}", e)
+            return -1L
+        }
+        Log.d(TAG, "Parsed HMSMS time string '${matchResult.value}' to $totalMs ms")
+        return totalMs
     }
 
     private fun formatBatteryTime(timeStr: String): String {
@@ -171,10 +540,12 @@ class ProcessDetailActivity : ComponentActivity() {
         }
     }
 
+    // Переконайтеся, що formatBatteryTimeMs коректно обробляє 0 та від'ємні значення
     private fun formatBatteryTimeMs(totalMs: Long): String {
-        if (totalMs < 0) return "N/A"
-        if (totalMs < 1000) return "0s"
+        if (totalMs < 0) return "N/A" // Якщо час не знайдено або помилка
+        if (totalMs < 1000) return "0s" // Якщо менше секунди, показуємо 0s
 
+        // ... (решта логіки форматування без змін)
         val totalSeconds = totalMs / 1000
         val hours = totalSeconds / 3600
         val minutes = (totalSeconds % 3600) / 60
@@ -183,6 +554,7 @@ class ProcessDetailActivity : ComponentActivity() {
         val parts = mutableListOf<String>()
         if (hours > 0) parts.add("${hours}h")
         if (minutes > 0) parts.add("${minutes}m")
+        // Завжди показуємо секунди, якщо години та хвилини нульові, або якщо секунди > 0
         if (seconds > 0 || parts.isEmpty()) parts.add("${seconds}s")
 
         return parts.joinToString(" ")
@@ -215,22 +587,81 @@ class ProcessDetailActivity : ComponentActivity() {
         binding.ppid.text = "PPID: $ppid (Parent: $parentName)"
 
         // Отримання packageName та іконки асинхронно
-        scope.launch {
+        lifecycleScope.launch {
             val (pkgName, appIcon) = getAppInfo(pid, processInfo!!.cmd)
             packageName = pkgName // Зберігаємо packageName
             withContext(Dispatchers.Main) {
                 binding.packageName.text = "Package Name: ${packageName ?: "N/A"}"
                 binding.appIcon.setImageDrawable(appIcon)
             }
-            val (batteryPercentage, batteryTime) = getBatteryUsageAndTime(packageName)
+
+            val (batteryPercentage, sourceData) = getBatteryUsageAndTime(packageName)
             withContext(Dispatchers.Main) {
+                // Загальні дані
                 binding.batteryUsage.text = "Battery Usage: $batteryPercentage"
-                binding.timeUsage.text = "Time Used: $batteryTime"
+
+                if(batteryPercentage!="N/A"){
+                    binding.settingsButton.visibility=View.VISIBLE
+                    binding.tableLabel.text="Battery and Time Usage by Source:"
+                    binding.sourceTable.visibility=View.VISIBLE
+                }
+                else{
+                    binding.tableLabel.text="Uh oh :(\nSeems like this is a system process\nNo battery stats for this one \uD83D\uDE14"
+                }
+
+                // Заповнення таблиці
+                binding.timeCpuFgs.text = sourceData["CPU Foreground Services"]?.time ?: "N/A"
+                binding.batteryCpuFgs.text = sourceData["CPU Foreground Services"]?.batteryPercentage ?: "N/A"
+                binding.mahCpuFgs.text = sourceData["CPU Foreground Services"]?.batteryMah ?: "N/A"
+
+                binding.timeCpuFg.text = sourceData["CPU Foreground"]?.time ?: "N/A"
+                binding.batteryCpuFg.text = sourceData["CPU Foreground"]?.batteryPercentage ?: "N/A"
+                binding.mahCpuFg.text = sourceData["CPU Foreground"]?.batteryMah ?: "N/A"
+
+                binding.timeCpuBg.text = sourceData["CPU Background"]?.time ?: "N/A"
+                binding.batteryCpuBg.text = sourceData["CPU Background"]?.batteryPercentage ?: "N/A"
+                binding.mahCpuBg.text = sourceData["CPU Background"]?.batteryMah ?: "N/A"
+
+                binding.timeForegroundServices.text = sourceData["Foreground Services"]?.time ?: "N/A"
+                binding.batteryForegroundServices.text = sourceData["Foreground Services"]?.batteryPercentage ?: "N/A"
+                binding.mahForegroundServices.text = sourceData["Foreground Services"]?.batteryMah ?: "N/A"
+
+                binding.timeForegroundActivities.text = sourceData["Foreground Activities"]?.time ?: "N/A"
+                binding.batteryForegroundActivities.text = sourceData["Foreground Activities"]?.batteryPercentage ?: "N/A"
+                binding.mahForegroundActivities.text = sourceData["Foreground Activities"]?.batteryMah ?: "N/A"
+
+                binding.timeWakelock.text = sourceData["Wakelock"]?.time ?: "N/A"
+                binding.batteryWakelock.text = sourceData["Wakelock"]?.batteryPercentage ?: "N/A"
+                binding.mahWakelock.text = sourceData["Wakelock"]?.batteryMah ?: "N/A"
+
+                binding.timeSensors.text = sourceData["Sensors"]?.time ?: "N/A"
+                binding.batterySensors.text = sourceData["Sensors"]?.batteryPercentage ?: "N/A"
+                binding.mahSensors.text = sourceData["Sensors"]?.batteryMah ?: "N/A"
+
+                binding.timeNetwork.text = sourceData["Network Usage"]?.time ?: "N/A"
+                binding.batteryNetwork.text = sourceData["Network Usage"]?.batteryPercentage ?: "N/A"
+                binding.mahNetwork.text = sourceData["Network Usage"]?.batteryMah ?: "N/A"
+
+                binding.timeJobscheduler.text = sourceData["JobScheduler"]?.time ?: "N/A"
+                binding.batteryJobscheduler.text = sourceData["JobScheduler"]?.batteryPercentage ?: "N/A"
+                binding.mahJobscheduler.text = sourceData["JobScheduler"]?.batteryMah ?: "N/A"
+
+                binding.timeSync.text = sourceData["Sync"]?.time ?: "N/A"
+                binding.batterySync.text = sourceData["Sync"]?.batteryPercentage ?: "N/A"
+                binding.mahSync.text = sourceData["Sync"]?.batteryMah ?: "N/A"
+
+                binding.timeAlarms.text = sourceData["Alarms"]?.time ?: "N/A"
+                binding.batteryAlarms.text = sourceData["Alarms"]?.batteryPercentage ?: "N/A"
+                binding.mahAlarms.text = sourceData["Alarms"]?.batteryMah ?: "N/A"
+
+                binding.timeTop.text = sourceData["Top"]?.time ?: "N/A"
+                binding.batteryTop.text = sourceData["Top"]?.batteryPercentage ?: "N/A"
+                binding.mahTop.text = sourceData["Top"]?.batteryMah ?: "N/A"
             }
         }
 
         // Динамічне оновлення CPU, MEM та Uptime
-        scope.launch {
+        lifecycleScope.launch {
             while (isActive) {
                 val updatedProcess = getProcessByPid(pid)
                 withContext(Dispatchers.Main) {
