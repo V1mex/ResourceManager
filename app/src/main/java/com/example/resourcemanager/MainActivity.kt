@@ -8,12 +8,17 @@ import android.util.Log
 import android.view.View
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
+import android.widget.LinearLayout
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
 import com.example.resourcemanager.databinding.ActivityMainBinding
 import kotlinx.coroutines.*
 import java.io.BufferedReader
 import java.io.InputStreamReader
+import android.app.Dialog
+import android.widget.Button
+import android.widget.TextView
 
 data class ProcessInfo(
     val pid: String,
@@ -21,7 +26,8 @@ data class ProcessInfo(
     val cpu: String,
     val mem: String,
     val cmd: String,
-    val uptime: Long
+    val uptime: Long,
+    var batteryUsageAvailable: Boolean?
 ) : java.io.Serializable
 
 class MainActivity : ComponentActivity() {
@@ -107,7 +113,7 @@ class MainActivity : ComponentActivity() {
         }
 
         // Ініціалізація Spinner для пошуку
-        val searchOptions = arrayOf("Search by Name", "Search by PID")
+        val searchOptions = arrayOf("Search by Name", "Search by PID", "Search by User")
         val searchAdapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, searchOptions)
         searchAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
         mylayout.searchSpinner.adapter = searchAdapter
@@ -116,7 +122,8 @@ class MainActivity : ComponentActivity() {
                 searchType = when (position) {
                     0 -> "name"
                     1 -> "pid"
-                    else -> "pid"
+                    2 -> "user"
+                    else -> "name" // Змінено на name як значення за замовчуванням
                 }
                 adapter.searchType = searchType
                 adapter.filter(mylayout.searchField.text.toString())
@@ -131,6 +138,8 @@ class MainActivity : ComponentActivity() {
             }
             override fun afterTextChanged(s: Editable?) {}
         })
+
+        mylayout.allUsersBtn.setOnClickListener{showUsersDialog()}
 
         scope.launch {
             while (isActive) {
@@ -214,7 +223,8 @@ class MainActivity : ComponentActivity() {
                         cpu = parts[2],
                         mem = parts[3],
                         cmd = parts.drop(4).dropLast(1).joinToString(" "),
-                        uptime = uptime
+                        uptime = uptime,
+                        batteryUsageAvailable = null
                     )
                 } else {
                     Log.e("GetProcesses", "Invalid line: $line")
@@ -269,6 +279,55 @@ class MainActivity : ComponentActivity() {
             else -> processes
         }
         return if (orderType == "desc") sorted.reversed() else sorted
+    }
+
+    private fun showUsersDialog() {
+        // Створення діалогу
+        val dialog = Dialog(this)
+        dialog.setContentView(R.layout.dialog_users_list)
+
+        // Наповнення LinearLayout списком користувачів асинхронно
+        val usersContainer = dialog.findViewById<LinearLayout>(R.id.usersContainer)
+        CoroutineScope(Dispatchers.Main).launch {
+            val users = withContext(Dispatchers.IO) { getSystemUsers() }
+            if (users.isEmpty()) {
+                Toast.makeText(this@MainActivity, "Користувачі не знайдені", Toast.LENGTH_SHORT).show()
+                dialog.dismiss()
+                return@launch
+            }
+
+            users.forEach { user ->
+                val textView = TextView(this@MainActivity).apply {
+                    text = user
+                    textSize = 20f
+                    setPadding(13, 0, 13, 0)
+                }
+                usersContainer.addView(textView)
+            }
+
+            // Показати діалог після наповнення
+            dialog.show()
+        }
+    }
+
+    private fun getSystemUsers(): List<String> {
+        return try {
+            val process = Runtime.getRuntime().exec(arrayOf("su", "-c", "ps -A -o user | sort | uniq"))
+            val reader = BufferedReader(InputStreamReader(process.inputStream))
+            val users = mutableListOf<String>()
+            reader.lineSequence().forEach { line ->
+                val user = line.trim()
+                if (user.isNotEmpty()) {
+                    users.add(user)
+                }
+            }
+            reader.close()
+            process.waitFor()
+            users
+        } catch (e: Exception) {
+            Log.e("MainActivity", "Error getting system users: ${e.message}", e)
+            emptyList()
+        }
     }
 
     private fun getCpuCores(): Int {

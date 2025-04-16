@@ -57,8 +57,9 @@ class ProcessAdapter(context: Context, private val processes: MutableList<Proces
         } else {
             filteredProcesses.addAll(processes.filter {
                 when (searchType) {
-                    "pid" -> it.pid.contains(query, ignoreCase = true)
+                    "pid" -> it.pid.toString().contains(query, ignoreCase = true)
                     "name" -> it.cmd.contains(query, ignoreCase = true)
+                    "user" -> it.user.contains(query, ignoreCase = true) // Додано пошук за user
                     else -> false
                 }
             })

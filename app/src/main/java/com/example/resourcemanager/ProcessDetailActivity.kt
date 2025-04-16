@@ -18,19 +18,11 @@ import com.example.resourcemanager.databinding.ActivityProcessDetailBinding
 import kotlinx.coroutines.*
 import java.io.BufferedReader
 import java.io.InputStreamReader
-
-
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-import java.util.regex.Pattern // Потрібен імпорт для Pattern
-
-
-
 class ProcessDetailActivity : ComponentActivity() {
     private lateinit var binding: ActivityProcessDetailBinding
-    private val scope = CoroutineScope(Dispatchers.IO)
-    private var processInfo: ProcessInfo? = null
     private var packageName: String? = null // Зберігаємо packageName
     // Додайте цю константу до класу
     companion object {
@@ -501,7 +493,6 @@ class ProcessDetailActivity : ComponentActivity() {
         }
     }
 
-
     private fun parseTimeFromHmsMs(matchResult: MatchResult): Long {
         var totalMs = 0L
         try {
@@ -525,19 +516,6 @@ class ProcessDetailActivity : ComponentActivity() {
         }
         Log.d(TAG, "Parsed HMSMS time string '${matchResult.value}' to $totalMs ms")
         return totalMs
-    }
-
-    private fun formatBatteryTime(timeStr: String): String {
-        return try {
-            val ms = timeStr.toLong()
-            formatBatteryTimeMs(ms)
-        } catch (e: NumberFormatException) {
-            Log.e("BatteryUsage", "Error parsing time string '$timeStr' to long: ${e.message}")
-            "N/A"
-        } catch (e: Exception) {
-            Log.e("BatteryUsage", "Error formatting time string '$timeStr': ${e.message}")
-            "N/A"
-        }
     }
 
     // Переконайтеся, що formatBatteryTimeMs коректно обробляє 0 та від'ємні значення
@@ -601,11 +579,13 @@ class ProcessDetailActivity : ComponentActivity() {
                 binding.batteryUsage.text = "Battery Usage: $batteryPercentage"
 
                 if(batteryPercentage!="N/A"){
+                    processInfo.batteryUsageAvailable=true
                     binding.settingsButton.visibility=View.VISIBLE
                     binding.tableLabel.text="Battery and Time Usage by Source:"
                     binding.sourceTable.visibility=View.VISIBLE
                 }
                 else{
+                    processInfo.batteryUsageAvailable=false
                     binding.tableLabel.text="Uh oh :(\nSeems like this is a system process\nNo battery stats for this one \uD83D\uDE14"
                 }
 
@@ -669,6 +649,7 @@ class ProcessDetailActivity : ComponentActivity() {
                         binding.cpuUsage.text = "CPU Usage: ${updatedProcess.cpu}%"
                         binding.memUsage.text = "Memory Usage: ${updatedProcess.mem}%"
                         binding.uptime.text = "Uptime: ${formatUptime(updatedProcess.uptime)}"
+                        binding.user.text = "User: ${updatedProcess.user}"
                     } else {
                         Toast.makeText(this@ProcessDetailActivity, "Процес $pid більше не існує", Toast.LENGTH_SHORT).show()
                         finish()
@@ -680,27 +661,115 @@ class ProcessDetailActivity : ComponentActivity() {
 
         // Обробка кнопки Kill
         binding.killButton.setOnClickListener {
-            val isSystemProcess = processInfo!!.user == "system" || processInfo!!.user == "root"
+            if (processInfo == null) {
+                Toast.makeText(this, "Помилка: інформація про процес відсутня", Toast.LENGTH_SHORT).show()
+                finish()
+                return@setOnClickListener
+            }
+
+            val isSystemProcess = processInfo!!.user in listOf(
+                "system", "root", "shell", "audioserver", "media", "credstore",
+                "drm", "wifi", "keystore", "gps", "mediaex", "radio", "gpu_service",
+                "webview_zygote", "secure_element", "vendor_qrtr", "cameraserver",
+                "mdnsr", "vendor_rfs", "lmkd", "mediacodec", "bluetooth", "camera",
+                "incidentd", "logd", "network_stack", "nobody", "prng_seeder",
+                "statsd", "tombstoned"
+            )
+
             if (isSystemProcess) {
+                val message = when (processInfo!!.user) {
+                    "audioserver" -> "Це процес аудіосистеми. Завершення може порушити звук на пристрої та викликати нестабільність. Продовжити?"
+                    "credstore" -> "Це процес системи безпеки. Завершення може порушити автентифікацію та доступ до захищених даних. Продовжити?"
+                    "media" -> "Це процес медіасистеми. Завершення може порушити відтворення медіа та вплинути на галерею чи камеру. Продовжити?"
+                    "drm" -> "Це процес керування захищеним контентом. Завершення може порушити відтворення захищених медіа (наприклад, Netflix). Продовжити?"
+                    "wifi" -> "Це процес Wi-Fi. Завершення призведе до втрати Wi-Fi-з’єднання. Продовжити?"
+                    "keystore" -> "Це процес криптографічної безпеки. Завершення порушить автентифікацію та функції безпеки. Продовжити?"
+                    "gps" -> "Це процес геолокації. Завершення може порушити GPS і навігаційні функції. Продовжити?"
+                    "mediaex" -> "Це процес обробки медіаданих. Завершення може вплинути на відтворення медіафайлів. Продовжити?"
+                    "radio" -> "Це процес телефонії. Завершення може порушити дзвінки, SMS і мобільний інтернет. Продовжити?"
+                    "gpu_service" -> "Це процес графічного рендерингу. Завершення викличе графічні збої. Продовжити?"
+                    "webview_zygote" -> "Це процес вебконтенту. Завершення може порушити відображення вебсторінок у додатках. Продовжити?"
+                    "secure_element" -> "Це процес безпеки (наприклад, NFC-платежі). Завершення порушить безконтактні платежі та інші функції. Продовжити?"
+                    "vendor_qrtr" -> "Це процес апаратної комунікації. Завершення може порушити модем, звук чи інші функції. Продовжити?"
+                    "cameraserver" -> "Це процес камери. Завершення може порушити роботу камери в усіх додатках. Продовжити?"
+                    "mdnsr" -> "Це процес мережевого виявлення. Завершення може порушити функції, як-от Chromecast. Продовжити?"
+                    "vendor_rfs" -> "Це процес доступу до апаратних файлів. Завершення може порушити апаратні функції. Продовжити?"
+                    "lmkd" -> "Це процес керування пам’яттю. Завершення може викликати збої додатків і нестабільність системи. Продовжити?"
+                    "mediacodec" -> "Це процес кодування/декодування медіа. Завершення може порушити відтворення відео чи аудіо в додатках. Продовжити?"
+                    "bluetooth" -> "Це процес Bluetooth. Завершення може порушити Bluetooth-з’єднання та функції, як-от гарнітури чи передача файлів. Продовжити?"
+                    "camera" -> "Це процес камери. Завершення може порушити роботу камери в усіх додатках. Продовжити?"
+                    "incidentd" -> "Це процес збору звітів про збої. Завершення може порушити діагностику системи. Продовжити?"
+                    "logd" -> "Це процес системного логування. Завершення може порушити запис логів і діагностику. Продовжити?"
+                    "network_stack" -> "Це процес мережевих функцій. Завершення може порушити Wi-Fi, мобільний інтернет чи VPN. Продовжити?"
+                    "nobody" -> "Це процес із обмеженими правами. Завершення може вплинути на фонові системні задачі. Продовжити?"
+                    "prng_seeder" -> "Це процес генерації випадкових чисел. Завершення може порушити криптографічні операції. Продовжити?"
+                    "statsd" -> "Це процес збору статистики. Завершення може порушити моніторинг продуктивності системи. Продовжити?"
+                    "tombstoned" -> "Це процес збереження звітів про збої. Завершення може порушити збереження даних про помилки. Продовжити?"
+                    else -> "Це системний процес. Його завершення може спричинити нестабільність системи. Продовжити?"
+                }
                 AlertDialog.Builder(this)
                     .setTitle("Попередження")
-                    .setMessage("Це системний процес. Його завершення може спричинити нестабільність системи. Продовжити?")
+                    .setMessage(message)
                     .setPositiveButton("Так") { _, _ ->
-                        killProcess(pid)
-                        Toast.makeText(this, "Процес $pid завершено", Toast.LENGTH_SHORT).show()
-                        setResult(RESULT_OK)
+                        val success = killProcess(processInfo!!.pid)
+                        if (success) {
+                            Toast.makeText(this, "Процес ${processInfo!!.pid} завершено", Toast.LENGTH_SHORT).show()
+                            setResult(RESULT_OK, Intent().apply {
+                                putExtra("process_killed", true)
+                                putExtra("pid", processInfo!!.pid)
+                            })
+                        } else {
+                            AlertDialog.Builder(this)
+                                .setTitle("Помилка")
+                                .setMessage("Не вдалося завершити процес ${processInfo!!.pid}. Можливо, потрібні root-дозволи.")
+                                .setPositiveButton("OK", null)
+                                .show()
+                            setResult(RESULT_CANCELED)
+                        }
                         finish()
                     }
                     .setNegativeButton("Ні", null)
                     .show()
             } else {
-                killProcess(pid)
-                Toast.makeText(this, "Процес $pid завершено", Toast.LENGTH_SHORT).show()
-                setResult(RESULT_OK)
-                finish()
+                val packageName = getPackageNameFromUser(processInfo!!.user, processInfo!!.pid.toInt(), this)
+                val appName = getAppNameFromPackage(packageName, this)
+                val message = if (packageName != null) {
+                    val available = processInfo.batteryUsageAvailable
+                    if(available==null)
+                        "Зачекаааай"
+                    else
+                        if (available)
+                            "Це головний процес додатка '$appName'. Завершення зупинить цей додаток. Продовжити?"
+                        else
+                            "Це під-процес додатка '$appName'. Завершення може привести до збоїв або завершення цього додатку. Продовжити?"
+                } else {
+                    "Це невідомий процес. Завершення може вплинути на стабільність системи. Продовжити?"
+                }
+                AlertDialog.Builder(this)
+                    .setTitle("Підтвердження")
+                    .setMessage(message)
+                    .setPositiveButton("Так") { _, _ ->
+                        val success = killProcess(processInfo!!.pid)
+                        if (success) {
+                            Toast.makeText(this, "Процес ${processInfo!!.pid} завершено", Toast.LENGTH_SHORT).show()
+                            setResult(RESULT_OK, Intent().apply {
+                                putExtra("process_killed", true)
+                                putExtra("pid", processInfo!!.pid)
+                            })
+                        } else {
+                            AlertDialog.Builder(this)
+                                .setTitle("Помилка")
+                                .setMessage("Не вдалося завершити процес ${processInfo!!.pid}. Можливо, потрібні root-дозволи.")
+                                .setPositiveButton("OK", null)
+                                .show()
+                            setResult(RESULT_CANCELED)
+                        }
+                        finish()
+                    }
+                    .setNegativeButton("Ні", null)
+                    .show()
             }
         }
-
         // Обробка нової кнопки для відкриття налаштувань додатка
         binding.settingsButton.setOnClickListener {
             packageName?.let { pkg ->
@@ -716,15 +785,6 @@ class ProcessDetailActivity : ComponentActivity() {
             } ?: run {
                 Toast.makeText(this, "Назва пакета недоступна", Toast.LENGTH_SHORT).show()
             }
-        }
-    }
-
-    private fun getSystemContext(packageName: String): Context? {
-        return try {
-            createPackageContext(packageName, Context.CONTEXT_INCLUDE_CODE or Context.CONTEXT_IGNORE_SECURITY)
-        } catch (e: Exception) {
-            Log.e("ProcessDetail", "Error getting system context for $packageName: ${e.message}")
-            null
         }
     }
 
@@ -844,7 +904,8 @@ class ProcessDetailActivity : ComponentActivity() {
                         cpu = parts[2],
                         mem = parts[3],
                         cmd = parts.drop(4).dropLast(1).joinToString(" "),
-                        uptime = uptime
+                        uptime = uptime,
+                        batteryUsageAvailable = null
                     )
                 } else {
                     null
@@ -889,12 +950,72 @@ class ProcessDetailActivity : ComponentActivity() {
         }
     }
 
-    private fun killProcess(pid: String) {
-        try {
-            Runtime.getRuntime().exec("su -c kill -9 $pid")
+    private fun killProcess(pid: String): Boolean {
+        return try {
+            val process = Runtime.getRuntime().exec(arrayOf("su", "-c", "kill $pid"))
+            process.waitFor()
+            process.exitValue() == 0
         } catch (e: Exception) {
-            Log.e("ProcessDetail", "Error killing process $pid: ${e.message}")
-            Toast.makeText(this, "Помилка при завершенні процесу", Toast.LENGTH_SHORT).show()
+            Log.e("ProcessDetails", "Error killing process $pid: ${e.message}", e)
+            false
+        }
+    }
+
+    private fun getPackageNameFromUser(user: String, pid: Int, context: Context): String? {
+        if (!user.startsWith("u0_a")) return null
+        return try {
+            // Спроба отримати UID із /proc/[pid]/status
+            val uid = getUidFromPid(pid) ?: run {
+                // Резервна формула
+                val appId = user.removePrefix("u0_a").toInt()
+                10000 + appId
+            }
+
+            Log.d("ProcessDetails", "Trying UID $uid for user $user, pid $pid")
+
+            // Спроба через PackageManager
+            val pm = context.packageManager
+            var packages = pm.getPackagesForUid(uid)
+            if (packages != null) {
+                return packages.firstOrNull().also {
+                    Log.d("ProcessDetails", "Found package via PackageManager: $it")
+                }
+            }
+
+            // Резервний варіант: pm list packages -U
+            Log.w("ProcessDetails", "PackageManager returned null, trying pm list packages")
+            val process = Runtime.getRuntime().exec(arrayOf("su", "-c", "pm list packages -U"))
+            val reader = BufferedReader(InputStreamReader(process.inputStream))
+            var packageName: String? = null
+            reader.lineSequence().forEach { line ->
+                if (line.contains("uid:$uid")) {
+                    packageName = line.substringAfter("package:").substringBefore(" uid:")
+                }
+            }
+            process.waitFor()
+
+            packageName.also {
+                if (it == null) {
+                    Log.w("ProcessDetails", "No package found for UID $uid (user: $user, pid: $pid)")
+                } else {
+                    Log.d("ProcessDetails", "Found package via pm list packages: $it")
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("ProcessDetails", "Error getting package for user $user, pid $pid: ${e.message}", e)
+            null
+        }
+    }
+
+    private fun getAppNameFromPackage(packageName: String?, context: Context): String {
+        if (packageName == null) return "Невідомий додаток"
+        return try {
+            val pm = context.packageManager
+            val appInfo = pm.getApplicationInfo(packageName, 0)
+            pm.getApplicationLabel(appInfo).toString()
+        } catch (e: Exception) {
+            Log.e("ProcessDetails", "Error getting app name for $packageName: ${e.message}", e)
+            packageName // Повертаємо packageName як резервний варіант
         }
     }
 
@@ -910,8 +1031,27 @@ class ProcessDetailActivity : ComponentActivity() {
         }
     }
 
-    override fun onDestroy() {
-        super.onDestroy()
-        scope.cancel()
+    private fun getUidFromPid(pid: Int): Int? {
+        return try {
+            val process = Runtime.getRuntime().exec(arrayOf("su", "-c", "cat /proc/$pid/status"))
+            val reader = BufferedReader(InputStreamReader(process.inputStream))
+            var uid: Int? = null
+            reader.lineSequence().forEach { line ->
+                if (line.startsWith("Uid:")) {
+                    val parts = line.split("\\s+".toRegex())
+                    if (parts.size > 1) {
+                        uid = parts[1].toIntOrNull()
+                    }
+                }
+            }
+            process.waitFor()
+            uid
+        } catch (e: Exception) {
+            Log.e("ProcessDetails", "Error getting UID for pid $pid: ${e.message}", e)
+            null
+        }
     }
+
+
+
 }
