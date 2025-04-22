@@ -74,12 +74,4 @@
         android:dividerHeight="1dp"
         android:layout_marginTop="8dp" />
 
-    <Button
-        android:id="@+id/close_btn"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="8dp"
-        android:text="Finish this activity"
-        android:visibility="gone" />
-
 </LinearLayout>

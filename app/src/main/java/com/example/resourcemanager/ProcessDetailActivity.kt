@@ -564,6 +564,15 @@ class ProcessDetailActivity : ComponentActivity() {
         val (ppid, parentName) = getParentProcessInfo(pid)
         binding.ppid.text = "PPID: $ppid (Parent: $parentName)"
 
+        // Обробка кліку на "Find Related"
+        binding.findRelatedText.setOnClickListener {
+            val resultIntent = Intent().apply {
+                putExtra("selected_user", processInfo.user)
+            }
+            setResult(RESULT_OK, resultIntent)
+            finish()
+        }
+
         // Отримання packageName та іконки асинхронно
         lifecycleScope.launch {
             val (pkgName, appIcon) = getAppInfo(pid, processInfo!!.cmd)

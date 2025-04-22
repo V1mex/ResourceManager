@@ -43,10 +43,21 @@ class MainActivity : ComponentActivity() {
     // Додаємо ActivityResultLauncher
     private val processDetailLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode == RESULT_OK) {
-            scope.launch {
-                val processes = sortProcesses(getProcesses())
-                withContext(Dispatchers.Main) {
-                    adapter.updateData(processes, mylayout.searchField.text.toString())
+            val data = result.data
+            val user = data?.getStringExtra("selected_user")
+            val processKilled = data?.getBooleanExtra("process_killed", false) ?: false
+            if (user != null) {
+                // Налаштовуємо пошук за користувачем
+                mylayout.searchField.setText(user)
+                mylayout.searchSpinner.setSelection(2) // "Search by User"
+                adapter.filter(user)
+            } else if (processKilled) {
+                // Оновлюємо список процесів після завершення
+                scope.launch {
+                    val processes = sortProcesses(getProcesses())
+                    withContext(Dispatchers.Main) {
+                        adapter.updateData(processes, mylayout.searchField.text.toString())
+                    }
                 }
             }
         }
@@ -56,10 +67,6 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         mylayout = ActivityMainBinding.inflate(layoutInflater)
         setContentView(mylayout.root)
-
-        mylayout.closeBtn.setOnClickListener {
-            System.exit(0)
-        }
 
         mylayout.freezeSwitch.setOnCheckedChangeListener { _, isChecked ->
             isFrozen = isChecked
@@ -299,8 +306,21 @@ class MainActivity : ComponentActivity() {
             users.forEach { user ->
                 val textView = TextView(this@MainActivity).apply {
                     text = user
-                    textSize = 20f
-                    setPadding(13, 0, 13, 0)
+                    textSize = 21f
+                    setPadding(13, 8, 13, 8) // Додано вертикальний padding для кращого вигляду
+                    // Додаємо ripple-ефект для реакції на дотик
+                    setBackgroundResource(android.R.drawable.list_selector_background)
+                    // Додаємо обробник кліку
+                    setOnClickListener {
+                        // Встановлюємо ім'я користувача в пошукове поле
+                        mylayout.searchField.setText(user)
+                        // Змінюємо тип пошуку на "Search by User"
+                        mylayout.searchSpinner.setSelection(2) // Позиція 2 відповідає "Search by User"
+                        // Оновлюємо фільтр адаптера
+                        adapter.filter(user)
+                        // Закриваємо діалог
+                        dialog.dismiss()
+                    }
                 }
                 usersContainer.addView(textView)
             }
