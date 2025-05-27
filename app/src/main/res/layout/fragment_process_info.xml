@@ -1,0 +1,122 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:padding="16dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/pid"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="PID: N/A"
+            android:textSize="18sp"
+            android:layout_marginBottom="8dp" />
+
+        <TextView
+            android:id="@+id/ppid"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="PPID: N/A"
+            android:textSize="18sp"
+            android:layout_marginBottom="8dp" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginBottom="8dp">
+
+            <TextView
+                android:id="@+id/user"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="User: N/A"
+                android:textSize="18sp" />
+
+            <TextView
+                android:id="@+id/find_related_text"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="See others"
+                android:textSize="18sp"
+                android:textColor="#0000FF"
+                android:background="?android:attr/selectableItemBackground"
+                android:clickable="true"
+                android:focusable="true"
+                android:paddingStart="8dp"
+                android:paddingEnd="8dp"
+                android:layout_marginStart="8dp"/>
+        </LinearLayout>
+
+
+        <TextView
+            android:id="@+id/uptime"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Uptime: N/A"
+            android:textSize="18sp"
+            android:layout_marginBottom="8dp" />
+
+
+        <TextView
+            android:id="@+id/cpu_usage"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="CPU Usage: N/A"
+            android:textSize="18sp"
+            android:layout_marginBottom="8dp" />
+
+
+        <TextView
+            android:id="@+id/mem_usage"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Memory Usage: N/A"
+            android:textSize="18sp"
+            android:layout_marginBottom="8dp" />
+
+
+        <TextView
+            android:id="@+id/battery_usage"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="8dp"
+            android:text="Battery Usage: Loading..."
+            android:textSize="18sp" />
+
+
+        <TextView
+            android:id="@+id/package_name"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="8dp"
+            android:text="Package Name: Loading..."
+            android:textSize="18sp" />
+
+        <Button
+            android:id="@+id/settingsButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="3dp"
+            android:text="Open this app in settings"
+            android:visibility="gone" />
+
+
+        <Button
+            android:id="@+id/kill_button"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="3dp"
+            android:layout_marginBottom="11dp"
+            android:backgroundTint="#FF0000"
+            android:text="Kill Process"
+            android:textSize="16dp" />
+    </LinearLayout>
+</ScrollView>

@@ -62,7 +62,16 @@
             android:id="@+id/allUsersBtn"
             android:layout_width="wrap_content"
             android:layout_height="48dp"
-            android:text="All users" />
+            android:text="All users"
+            />
+
+        <Button
+            android:id="@+id/check_updates"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="check for updates" />
+
     </LinearLayout>
 
     <ListView

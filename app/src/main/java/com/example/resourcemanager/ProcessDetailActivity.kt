@@ -1,5 +1,593 @@
 package com.example.resourcemanager
 
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.graphics.drawable.Drawable
+import android.os.Bundle
+import android.util.Log
+import android.widget.Toast
+import androidx.appcompat.app.AppCompatActivity // Важливо: Використовуйте AppCompatActivity для підтримки фрагментів та Material Components
+import androidx.core.content.ContextCompat
+import androidx.fragment.app.Fragment
+import androidx.lifecycle.lifecycleScope
+import com.example.resourcemanager.databinding.ActivityProcessDetailBinding
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.BufferedReader
+import java.io.InputStreamReader
+import java.io.Serializable
+
+class ProcessDetailActivity : AppCompatActivity(), ProcessInfoFragment.OnUserSelectedListener { // Змінено на AppCompatActivity
+
+    private lateinit var binding: ActivityProcessDetailBinding
+    private var processInfo: ProcessInfo? = null
+    private var packageName: String? = null
+    private var appIcon: Drawable? = null
+    private var batteryPercentage: String = "Loading..."
+    private var sourceDataMap: Map<String, SourceData>? = null
+    private var isBatteryAvailable: Boolean = false
+
+
+    companion object {
+        private const val TAG = "ProcessDetailActivity"
+        //const val RESULT_OK = 1234
+    }
+
+    //class SerializableMap(val map: Map<String, ProcessDetailActivity.SourceData>) : java.io.Serializable
+
+    data class SourceData(
+        val time: String,
+        val batteryPercentage: String,
+        val batteryMah: String
+    ) : java.io.Serializable
+
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        binding = ActivityProcessDetailBinding.inflate(layoutInflater)
+        setContentView(binding.root)
+
+        processInfo = intent.getSerializableExtra("process_info") as ProcessInfo?
+
+        if (processInfo == null) {
+            Toast.makeText(this, "Помилка: дані про процес відсутні", Toast.LENGTH_SHORT).show()
+            finish()
+            return
+        }
+
+        binding.appNameActivity.text = processInfo!!.cmd // Початкова назва
+
+        setupBottomNavigation()
+        loadDataAndSetupUI()
+
+        // Завантажуємо перший фрагмент
+        if (savedInstanceState == null) {
+            loadFragment(ProcessInfoFragment.newInstance(processInfo!!, packageName, batteryPercentage))
+        }
+    }
+
+    private fun setupBottomNavigation() {
+        binding.bottomNavigation.setOnItemSelectedListener { item ->
+            when (item.itemId) {
+                R.id.nav_info -> {
+                    loadFragment(ProcessInfoFragment.newInstance(processInfo!!, packageName, batteryPercentage))
+                    true
+                }
+                R.id.nav_battery -> {
+                    loadFragment(BatteryUsageFragment.newInstance(sourceDataMap, isBatteryAvailable))
+                    true
+                }
+                R.id.nav_placeholder -> {
+                    loadFragment(SnapshotsFragment.newInstance())
+                    true
+                }
+                else -> false
+            }
+        }
+    }
+
+    private fun loadDataAndSetupUI() {
+        lifecycleScope.launch {
+            // Отримуємо іконку та назву
+            val (pkgName, icon) = getAppInfo(processInfo!!.pid, processInfo!!.cmd)
+            packageName = pkgName
+            appIcon = icon
+            withContext(Dispatchers.Main) {
+                binding.appNameActivity.text = processInfo!!.cmd
+                binding.appIconActivity.setImageDrawable(appIcon)
+            }
+
+            // Отримуємо дані про батарею
+            val (percentage, sources) = getBatteryUsageAndTime(packageName)
+            batteryPercentage = percentage
+            sourceDataMap = sources
+            isBatteryAvailable = percentage != "N/A"
+
+            // Оновлюємо поточний фрагмент, якщо він ProcessInfoFragment
+            val currentFragment = supportFragmentManager.findFragmentById(R.id.fragment_container)
+            if (currentFragment is ProcessInfoFragment) {
+                loadFragment(ProcessInfoFragment.newInstance(processInfo!!, packageName, batteryPercentage))
+            }
+        }
+    }
+
+    private fun loadFragment(fragment: Fragment) {
+        supportFragmentManager.beginTransaction()
+            .replace(R.id.fragment_container, fragment)
+            .commit()
+    }
+
+    // --- Перенесіть сюди УСІ ваші функції, що не стосуються UI ---
+    // getUidForPackage, getBatteryUsageAndTime, calculatePercentage,
+    // parseTimeFromHmsMs, formatBatteryTimeMs, getAppInfo, readCmdline,
+    // getIconFromApk, etc.
+    // Важливо: переконайтеся, що вони використовують `this` або `applicationContext`
+    // коректно, якщо це необхідно.
+
+    // Приклад переносу однієї функції:
+    private suspend fun getAppInfo(pid: String, cmd: String): Pair<String?, Drawable?> = withContext(Dispatchers.IO) {
+        Log.d(TAG, "Attempting to get app info for PID: $pid, CMD: $cmd")
+        try {
+            val cmdline = readCmdline(pid)
+            Log.d(TAG, "Raw cmdline: '$cmdline'")
+            val cleanCmdline = cmdline.split("\u0000")[0]
+            Log.d(TAG, "Clean cmdline: '$cleanCmdline'")
+            val possiblePackageName = cleanCmdline.split(":")[0].trim()
+            Log.d(TAG, "Possible packageName from cmdline: '$possiblePackageName'")
+
+            if (possiblePackageName.isNotEmpty() && possiblePackageName.matches(Regex("^[a-zA-Z0-9._]+$"))) {
+                val appIcon = getIconFromApk(possiblePackageName)
+                    ?: ContextCompat.getDrawable(this@ProcessDetailActivity, android.R.drawable.sym_def_app_icon)
+                return@withContext Pair(possiblePackageName, appIcon)
+            }
+
+            Log.d(TAG, "No package found for PID: $pid")
+            val defaultIcon = ContextCompat.getDrawable(this@ProcessDetailActivity, android.R.drawable.sym_def_app_icon)
+            return@withContext Pair(null, defaultIcon)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error getting app info for PID $pid: ${e.message}")
+            val defaultIcon = ContextCompat.getDrawable(this@ProcessDetailActivity, android.R.drawable.sym_def_app_icon)
+            return@withContext Pair(null, defaultIcon)
+        }
+    }
+
+    private fun readCmdline(pid: String): String {
+        return try {
+            val process = Runtime.getRuntime().exec("su -c cat /proc/$pid/cmdline")
+            val reader = BufferedReader(InputStreamReader(process.inputStream))
+            val cmdline = reader.readLine()?.trim() ?: ""
+            reader.close()
+            cmdline
+        } catch (e: Exception) {
+            Log.e(TAG, "Error reading cmdline for PID $pid: ${e.message}")
+            ""
+        }
+    }
+
+    private fun getIconFromApk(packageName: String): Drawable? {
+        return try {
+            val process = Runtime.getRuntime().exec("su -c pm path $packageName")
+            val reader = BufferedReader(InputStreamReader(process.inputStream))
+            val apkPath = reader.readLine()?.replace("package:", "")?.trim()
+            reader.close()
+
+            Log.d(TAG, "APK path for $packageName: $apkPath")
+            if (apkPath != null) {
+                // Використовуємо flag PackageManager.GET_META_DATA
+                val packageInfo = packageManager.getPackageArchiveInfo(apkPath, PackageManager.GET_META_DATA)
+                if (packageInfo != null) {
+                    val appInfo = packageInfo.applicationInfo
+                    appInfo?.sourceDir = apkPath
+                    Log.d(TAG, "Loaded package info for $packageName from APK")
+                    return appInfo?.loadIcon(packageManager)
+                }
+            }
+            Log.d(TAG, "Failed to load package info for $packageName from APK")
+            null
+        } catch (e: Exception) {
+            Log.e(TAG, "Error getting icon for $packageName: ${e.message}")
+            null
+        }
+    }
+
+    // ... (додайте решту ваших функцій: getUidForPackage, getBatteryUsageAndTime, etc.) ...
+    private fun getUidForPackage(packageName: String): String? {
+        return try {
+            val process = Runtime.getRuntime().exec("su -c pm list packages -U")
+            val reader = BufferedReader(InputStreamReader(process.inputStream))
+            val errorReader = BufferedReader(InputStreamReader(process.errorStream))
+            val output = reader.readText()
+            val errorOutput = errorReader.readText()
+            reader.close()
+            errorReader.close()
+            val exitCode = process.waitFor()
+
+            if (exitCode != 0 || errorOutput.isNotBlank()) {
+                Log.e(TAG, "pm list packages command failed. Exit code: $exitCode, Error: $errorOutput")
+            }
+
+            val packageLine = output.lines().find { it.contains(packageName) && it.contains("uid:") }
+
+            if (packageLine != null) {
+                val uidMatch = Regex("uid:(\\d+)").find(packageLine)
+                val foundUid = uidMatch?.groupValues?.getOrNull(1)
+                if (foundUid != null) {
+                    Log.d(TAG,"Extracted UID $foundUid from line: $packageLine")
+                    return foundUid
+                } else {
+                    Log.w(TAG,"Found line for $packageName but failed to extract userId: $packageLine")
+                    return packageLine.substringAfter("uid:")?.trim()?.takeIf { it.isNotEmpty() }
+                }
+            } else {
+                Log.w(TAG, "Could not find line containing '$packageName' and 'uid:' in pm list output.")
+                return null
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error getting UID for $packageName: ${e.message}", e)
+            null
+        }
+    }
+
+    private suspend fun getBatteryUsageAndTime(packageName: String?): Pair<String, Map<String, SourceData>> = withContext(Dispatchers.IO) {
+        if (packageName == null) {
+            Log.w(TAG, "PackageName is null, cannot get battery usage.")
+            return@withContext Pair("N/A", emptyMap())
+        }
+        Log.d(TAG, "Attempting to get battery usage for package: $packageName")
+
+        val uid = getUidForPackage(packageName)
+        if (uid == null) {
+            Log.w(TAG, "Could not retrieve UID for package: $packageName")
+            return@withContext Pair("N/A", emptyMap())
+        }
+        Log.i(TAG, "Found UID for $packageName: $uid")
+
+        val formattedUid = if (uid.startsWith("10") && uid.length >= 5) {
+            "u0a${uid.substring(2)}"
+        } else {
+            uid
+        }
+        Log.d(TAG, "Formatted UID for dumpsys: $formattedUid")
+
+        var output: String
+        try {
+            val process = Runtime.getRuntime().exec("su -c dumpsys batterystats --charged")
+            val reader = BufferedReader(InputStreamReader(process.inputStream))
+            val errorReader = BufferedReader(InputStreamReader(process.errorStream))
+            val outputBuilder = StringBuilder()
+            var line: String?
+            while (reader.readLine().also { line = it } != null) {
+                outputBuilder.append(line).append("\n")
+            }
+            output = outputBuilder.toString()
+            val errorOutput = errorReader.readText()
+            reader.close()
+            errorReader.close()
+            val exitCode = process.waitFor()
+            if (exitCode != 0) {
+                Log.e(TAG, "dumpsys command failed with exit code $exitCode. Error output: $errorOutput")
+                return@withContext Pair("N/A", emptyMap())
+            }
+            if (output.isBlank()) {
+                Log.e(TAG, "dumpsys command returned empty output. Error output: $errorOutput")
+                return@withContext Pair("N/A", emptyMap())
+            }
+            Log.d(TAG, "dumpsys batterystats output length: ${output.length}")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error executing or reading dumpsys command for $packageName: ${e.message}", e)
+            return@withContext Pair("N/A", emptyMap())
+        }
+
+        try {
+            var totalMah = 0.0
+            var appMah = "N/A"
+            val sourceData = mutableMapOf<String, SourceData>().apply {
+                put("CPU Foreground Services", SourceData("N/A", "N/A", "N/A"))
+                put("CPU Foreground", SourceData("N/A", "N/A", "N/A"))
+                put("CPU Background", SourceData("N/A", "N/A", "N/A"))
+                put("Foreground Services", SourceData("N/A", "N/A", "N/A"))
+                put("Foreground Activities", SourceData("N/A", "N/A", "N/A"))
+                put("Wakelock", SourceData("N/A", "N/A", "N/A"))
+                put("Sensors", SourceData("N/A", "N/A", "N/A"))
+                put("Network Usage", SourceData("N/A", "N/A", "N/A"))
+                put("JobScheduler", SourceData("N/A", "N/A", "N/A"))
+                put("Sync", SourceData("N/A", "N/A", "N/A"))
+                put("Alarms", SourceData("N/A", "N/A", "N/A"))
+                put("Top", SourceData("N/A", "N/A", "N/A"))
+            }
+            var foundUidSection = false
+            var processedLinesInUidSection = 0
+            var inEstimatedPowerSection = false
+            var processingUid = false
+
+            val totalDrainMatch = Regex("Computed drain: (\\d+\\.?\\d*),").find(output)
+            if (totalDrainMatch != null && totalDrainMatch.groupValues.size > 1) {
+                totalMah = totalDrainMatch.groupValues[1].toDoubleOrNull() ?: 0.0
+                Log.i(TAG, "Total computed drain: $totalMah mAh")
+            } else {
+                Log.w(TAG, "Could not find 'Computed drain:' in dumpsys output.")
+            }
+
+            val uidPatterns = listOf(
+                Regex("^\\s*UID ${Regex.escape(formattedUid)}:", RegexOption.IGNORE_CASE),
+                Regex("^\\s*${Regex.escape(formattedUid)}:", RegexOption.IGNORE_CASE)
+            )
+            val mahPattern = Regex("(\\d*\\.\\d+)|(\\d+)\\s*(?:mah|\\(calculated\\)|drain)", RegexOption.IGNORE_CASE)
+            val timePatternHmsMs = Regex("(\\d+d)?\\s*(\\d+h)?\\s*(\\d+m)?\\s*(\\d+s)?\\s*(\\d+ms)?", RegexOption.IGNORE_CASE)
+
+            Log.d(TAG, "Starting line-by-line parsing of dumpsys output for UID $formattedUid...")
+            val lines = output.lines()
+
+            for (i in lines.indices) {
+                val currentLine = lines[i]
+                var isUidStartLine = false
+
+                if (currentLine.contains("Estimated power use (mAh):", ignoreCase = true)) {
+                    inEstimatedPowerSection = true
+                } else if (inEstimatedPowerSection && currentLine.trim().isEmpty()) {
+                    inEstimatedPowerSection = false
+                }
+
+                if (!foundUidSection) {
+                    for (pattern in uidPatterns) {
+                        if (pattern.containsMatchIn(currentLine)) {
+                            foundUidSection = true
+                            isUidStartLine = true
+                            processingUid = true
+                            processedLinesInUidSection = 0
+                            Log.i(TAG, ">>> Found START of UID $formattedUid section at line $i: '$currentLine'")
+                            break
+                        }
+                    }
+                }
+
+                if (foundUidSection) {
+                    processedLinesInUidSection++
+
+                    if (inEstimatedPowerSection) {
+                        val isDifferentUidSectionStart = !isUidStartLine && uidPatterns.any { it.containsMatchIn(currentLine.replace(formattedUid, "different")) }
+                        if (!isUidStartLine && (!currentLine.startsWith(" ") || isDifferentUidSectionStart)) {
+                            Log.i(TAG, "<<< Heuristic END of UID $formattedUid section detected at line $i: '$currentLine'")
+                            foundUidSection = false
+                            processingUid = false
+                            continue
+                        }
+                    } else {
+                        val isNewUidSection = !isUidStartLine && uidPatterns.any { it.containsMatchIn(currentLine.replace(formattedUid, "different")) }
+                        if (!isUidStartLine && (isNewUidSection || currentLine.trim().startsWith(formattedUid.plus(":").replace("u0a196:", "u0a197:")))) {
+                            Log.i(TAG, "<<< Detailed UID $formattedUid section ended at line $i: '$currentLine'")
+                            foundUidSection = false
+                            processingUid = false
+                            continue
+                        }
+                    }
+
+                    if (appMah == "N/A" && inEstimatedPowerSection) {
+                        val mahMatch = mahPattern.find(currentLine)
+                        if (mahMatch != null) {
+                            val matchedValue = mahMatch.groupValues[1].takeIf { it.isNotEmpty() } ?: mahMatch.groupValues[2]
+                            if (matchedValue.isNotEmpty()) {
+                                appMah = matchedValue
+                                Log.i(TAG, "    +++ Found appMah: $appMah in line: '$currentLine'")
+                            }
+                        }
+                    }
+
+                    // ... (Решта логіки парсингу cpu:fgs, cpu:fg, etc.) ...
+                    if (currentLine.contains("cpu:fgs=", ignoreCase = true)) {
+                        val timeString = currentLine.substringAfter("cpu:fgs=").substringAfter("(").substringBefore(")")
+                        val batteryString = currentLine.substringAfter("fgs:").substringBefore("(").trim()
+                        val timeMatch = timePatternHmsMs.find(timeString)
+                        if (timeMatch != null) {
+                            val parsedMs = parseTimeFromHmsMs(timeMatch)
+                            if (parsedMs > 0) {
+                                val (percentage, mahFormatted) = calculatePercentage(batteryString, totalMah)
+                                sourceData["CPU Foreground Services"] = SourceData(formatBatteryTimeMs(parsedMs), percentage, mahFormatted)
+                            }
+                        }
+                    }
+                    if (currentLine.contains("cpu:fg=", ignoreCase = true)) {
+                        val timeString = currentLine.substringAfter("cpu:fg=").substringAfter("(").substringBefore(")")
+                        val batteryString = currentLine.substringAfter("fg:").substringBefore("(").trim()
+                        val timeMatch = timePatternHmsMs.find(timeString)
+                        if (timeMatch != null) {
+                            val parsedMs = parseTimeFromHmsMs(timeMatch)
+                            if (parsedMs > 0) {
+                                val (percentage, mahFormatted) = calculatePercentage(batteryString, totalMah)
+                                sourceData["CPU Foreground"] = SourceData(formatBatteryTimeMs(parsedMs), percentage, mahFormatted)
+                            }
+                        }
+                    }
+                    if (currentLine.contains("cpu:bg=", ignoreCase = true)) {
+                        val timeString = currentLine.substringAfter("cpu:bg=").substringAfter("(").substringBefore(")")
+                        val batteryString = currentLine.substringAfter("bg:").substringBefore("(").trim()
+                        val timeMatch = timePatternHmsMs.find(timeString)
+                        if (timeMatch != null) {
+                            val parsedMs = parseTimeFromHmsMs(timeMatch)
+                            if (parsedMs > 0) {
+                                val (percentage, mahFormatted) = calculatePercentage(batteryString, totalMah)
+                                sourceData["CPU Background"] = SourceData(formatBatteryTimeMs(parsedMs), percentage, mahFormatted)
+                            }
+                        }
+                    }
+                    if (currentLine.contains("wakelock=", ignoreCase = true)) {
+                        val timeString = currentLine.substringAfter("wakelock=").substringAfter("(").substringBefore(")")
+                        val batteryString = currentLine.substringAfter("wakelock=").substringBefore("(").trim()
+                        val timeMatch = timePatternHmsMs.find(timeString)
+                        if (timeMatch != null) {
+                            val parsedMs = parseTimeFromHmsMs(timeMatch)
+                            if (parsedMs > 0) {
+                                val (percentage, mahFormatted) = calculatePercentage(batteryString, totalMah)
+                                sourceData["Wakelock"] = SourceData(formatBatteryTimeMs(parsedMs), percentage, mahFormatted)
+                            }
+                        }
+                    }
+                    if (currentLine.contains("sensors=", ignoreCase = true)) {
+                        val timeString = currentLine.substringAfter("sensors=").substringAfter("(").substringBefore(")")
+                        val batteryString = currentLine.substringAfter("sensors=").substringBefore("(").trim()
+                        val timeMatch = timePatternHmsMs.find(timeString)
+                        if (timeMatch != null) {
+                            val parsedMs = parseTimeFromHmsMs(timeMatch)
+                            if (parsedMs > 0) {
+                                val (percentage, mahFormatted) = calculatePercentage(batteryString, totalMah)
+                                sourceData["Sensors"] = SourceData(formatBatteryTimeMs(parsedMs), percentage, mahFormatted)
+                            }
+                        }
+                    }
+                    if (currentLine.contains("wifi=", ignoreCase = true)) {
+                        val timeString = currentLine.substringAfter("wifi=").substringAfter("(").substringBefore(")")
+                        val batteryString = currentLine.substringAfter("wifi=").substringBefore("(").trim()
+                        val timeMatch = timePatternHmsMs.find(timeString)
+                        if (timeMatch != null) {
+                            val parsedMs = parseTimeFromHmsMs(timeMatch)
+                            if (parsedMs > 0) {
+                                val (percentage, mahFormatted) = calculatePercentage(batteryString, totalMah)
+                                sourceData["Network Usage"] = SourceData(formatBatteryTimeMs(parsedMs), percentage, mahFormatted)
+                            }
+                        }
+                    }
+
+                }
+                if (processingUid && currentLine.contains("Foreground services:", ignoreCase = true)) {
+                    val timeString = currentLine.substringAfter("Foreground services:").substringBefore("realtime").trim()
+                    val timeMatch = timePatternHmsMs.find(timeString)
+                    if (timeMatch != null) {
+                        val parsedMs = parseTimeFromHmsMs(timeMatch)
+                        if (parsedMs > 0) sourceData["Foreground Services"] = sourceData["Foreground Services"]!!.copy(time = formatBatteryTimeMs(parsedMs))
+                    }
+                }
+                if (processingUid && currentLine.contains("Foreground activities:", ignoreCase = true)) {
+                    val timeString = currentLine.substringAfter("Foreground activities:").substringBefore("realtime").trim()
+                    val timeMatch = timePatternHmsMs.find(timeString)
+                    if (timeMatch != null) {
+                        val parsedMs = parseTimeFromHmsMs(timeMatch)
+                        if (parsedMs > 0) sourceData["Foreground Activities"] = sourceData["Foreground Activities"]!!.copy(time = formatBatteryTimeMs(parsedMs))
+                    }
+                }
+                if (processingUid && currentLine.contains("Job completions:", ignoreCase = true)) {
+                    val timeString = currentLine.substringAfter("Job completions:").substringBefore("(").trim()
+                    val timeMatch = timePatternHmsMs.find(timeString)
+                    if (timeMatch != null) {
+                        val parsedMs = parseTimeFromHmsMs(timeMatch)
+                        if (parsedMs > 0) sourceData["JobScheduler"] = sourceData["JobScheduler"]!!.copy(time = formatBatteryTimeMs(parsedMs))
+                    }
+                }
+                if (processingUid && currentLine.contains("Sync:", ignoreCase = true)) {
+                    val timeString = currentLine.substringAfter("Sync:").substringBefore("(").trim()
+                    val timeMatch = timePatternHmsMs.find(timeString)
+                    if (timeMatch != null) {
+                        val parsedMs = parseTimeFromHmsMs(timeMatch)
+                        if (parsedMs > 0) sourceData["Sync"] = sourceData["Sync"]!!.copy(time = formatBatteryTimeMs(parsedMs))
+                    }
+                }
+                if (processingUid && currentLine.contains("Alarm:", ignoreCase = true)) {
+                    val timeString = currentLine.substringAfter("Alarm:").substringBefore("(").trim()
+                    val timeMatch = timePatternHmsMs.find(timeString)
+                    if (timeMatch != null) {
+                        val parsedMs = parseTimeFromHmsMs(timeMatch)
+                        if (parsedMs > 0) sourceData["Alarms"] = sourceData["Alarms"]!!.copy(time = formatBatteryTimeMs(parsedMs))
+                    }
+                }
+                if (processingUid && currentLine.contains("top:", ignoreCase = true)) {
+                    val timeString = currentLine.substringAfter("top:").substringBefore("(").trim()
+                    val timeMatch = timePatternHmsMs.find(timeString)
+                    if (timeMatch != null) {
+                        val parsedMs = parseTimeFromHmsMs(timeMatch)
+                        if (parsedMs > 0) sourceData["Top"] = sourceData["Top"]!!.copy(time = formatBatteryTimeMs(parsedMs))
+                    }
+                }
+
+
+            }
+            Log.d(TAG, "Finished line-by-line parsing.")
+
+            val percentage: String
+            if (appMah != "N/A" && totalMah > 0) {
+                val mahValue = appMah.toDoubleOrNull() ?: 0.0
+                percentage = if (mahValue > 0) String.format("%.1f%%", (mahValue / totalMah) * 100) else "0.0%"
+            } else {
+                percentage = "N/A"
+            }
+
+            Log.i(TAG, "Final result for $packageName (UID $formattedUid): Percentage=$percentage, Sources=$sourceData")
+            return@withContext Pair(percentage, sourceData)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error parsing dumpsys output for $packageName: ${e.message}", e)
+            return@withContext Pair("N/A", emptyMap())
+        }
+    }
+
+    private fun calculatePercentage(mah: String, totalMah: Double): Pair<String, String> {
+        val mahValue = mah.toDoubleOrNull() ?: 0.0
+        return if (mahValue > 0 && totalMah > 0) {
+            val percentage = String.format("%.4f%%", (mahValue / totalMah) * 100)
+            val mahFormatted = String.format("%.4f mAh", mahValue)
+            Pair(percentage, mahFormatted)
+        } else {
+            Pair("N/A", "N/A")
+        }
+    }
+
+    private fun parseTimeFromHmsMs(matchResult: MatchResult): Long {
+        var totalMs = 0L
+        try {
+            for (i in 1 until matchResult.groups.size) {
+                val group = matchResult.groups[i]
+                if (group != null) {
+                    val valueString = group.value.filter { it.isDigit() }
+                    val value = valueString.toLongOrNull() ?: 0L
+                    when {
+                        group.value.contains("d", ignoreCase = true) -> totalMs += value * 24 * 3600 * 1000
+                        group.value.contains("h", ignoreCase = true) -> totalMs += value * 3600 * 1000
+                        group.value.contains("m", ignoreCase = true) && !group.value.contains("ms", ignoreCase = true) -> totalMs += value * 60 * 1000
+                        group.value.contains("s", ignoreCase = true) && !group.value.contains("ms", ignoreCase = true) -> totalMs += value * 1000
+                        group.value.contains("ms", ignoreCase = true) -> totalMs += value
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error parsing time from HMSMS format: ${matchResult.value}", e)
+            return -1L
+        }
+        return totalMs
+    }
+
+    private fun formatBatteryTimeMs(totalMs: Long): String {
+        if (totalMs < 0) return "N/A"
+        if (totalMs < 1000) return "0s"
+
+        val totalSeconds = totalMs / 1000
+        val hours = totalSeconds / 3600
+        val minutes = (totalSeconds % 3600) / 60
+        val seconds = totalSeconds % 60
+
+        val parts = mutableListOf<String>()
+        if (hours > 0) parts.add("${hours}h")
+        if (minutes > 0) parts.add("${minutes}m")
+        if (seconds > 0 || parts.isEmpty()) parts.add("${seconds}s")
+
+        return parts.joinToString(" ")
+    }
+
+    class SerializableMap(val map: Map<String, ProcessDetailActivity.SourceData>) : Serializable
+
+    override fun onUserSelected(user: String?) {
+        val resultIntent = Intent().apply {
+            putExtra("selected_user", user)
+        }
+        setResult(RESULT_OK, resultIntent)
+        finish()
+    }
+
+
+
+}
+
+
+/*
+package com.example.resourcemanager
+
 import android.app.AlertDialog
 import android.content.Context
 import android.content.Intent
@@ -339,7 +927,11 @@ class ProcessDetailActivity : ComponentActivity() {
                         }
                     }
                 }
-
+// Kill process кнопка
+        binding.killButton.setOnClickListener {
+            // Делегувати назад в Activity
+            (activity as? ProcessDetailActivity)?.onKillRequested(detailData.pid)
+        }
                 // Пошук wakelock
                 if (processingUid && currentLine.contains("wakelock=", ignoreCase = true)) {
                     val timeString = currentLine.substringAfter("wakelock=").substringAfter("(").substringBefore(")")
@@ -1064,3 +1656,4 @@ class ProcessDetailActivity : ComponentActivity() {
 
 
 }
+*/

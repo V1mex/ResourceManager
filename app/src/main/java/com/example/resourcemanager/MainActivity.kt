@@ -19,6 +19,8 @@ import java.io.InputStreamReader
 import android.app.Dialog
 import android.widget.Button
 import android.widget.TextView
+import androidx.lifecycle.lifecycleScope
+import com.example.resourcemanager.update.UpdateManager
 
 data class ProcessInfo(
     val pid: String,
@@ -67,6 +69,14 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         mylayout = ActivityMainBinding.inflate(layoutInflater)
         setContentView(mylayout.root)
+
+        mylayout.checkUpdates.setOnClickListener {
+            lifecycleScope.launch {
+                val version = packageManager.getPackageInfo(packageName, 0).versionName
+                UpdateManager(this@MainActivity).checkForUpdate(version!!)
+            }
+        }
+
 
         mylayout.freezeSwitch.setOnCheckedChangeListener { _, isChecked ->
             isFrozen = isChecked
@@ -289,6 +299,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun showUsersDialog() {
+        
         // Створення діалогу
         val dialog = Dialog(this)
         dialog.setContentView(R.layout.dialog_users_list)
