@@ -6,7 +6,7 @@ import android.graphics.drawable.Drawable
 import android.os.Bundle
 import android.util.Log
 import android.widget.Toast
-import androidx.appcompat.app.AppCompatActivity // Важливо: Використовуйте AppCompatActivity для підтримки фрагментів та Material Components
+import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
@@ -18,23 +18,21 @@ import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.io.Serializable
 
-class ProcessDetailActivity : AppCompatActivity(), ProcessInfoFragment.OnUserSelectedListener { // Змінено на AppCompatActivity
+class ProcessDetailActivity : AppCompatActivity(), ProcessInfoFragment.OnUserSelectedListener {
 
     private lateinit var binding: ActivityProcessDetailBinding
     private var processInfo: ProcessInfo? = null
     private var packageName: String? = null
     private var appIcon: Drawable? = null
     private var batteryPercentage: String = "Loading..."
-    private var sourceDataMap: Map<String, SourceData>? = null
+    var sourceDataMap: Map<String, SourceData>? = null
+        private set
     private var isBatteryAvailable: Boolean = false
 
 
     companion object {
         private const val TAG = "ProcessDetailActivity"
-        //const val RESULT_OK = 1234
     }
-
-    //class SerializableMap(val map: Map<String, ProcessDetailActivity.SourceData>) : java.io.Serializable
 
     data class SourceData(
         val time: String,
@@ -79,7 +77,7 @@ class ProcessDetailActivity : AppCompatActivity(), ProcessInfoFragment.OnUserSel
                     true
                 }
                 R.id.nav_placeholder -> {
-                    loadFragment(SnapshotsFragment.newInstance())
+                    loadFragment(SnapshotsFragment.newInstance(processInfo!!))
                     true
                 }
                 else -> false
@@ -117,13 +115,6 @@ class ProcessDetailActivity : AppCompatActivity(), ProcessInfoFragment.OnUserSel
             .replace(R.id.fragment_container, fragment)
             .commit()
     }
-
-    // --- Перенесіть сюди УСІ ваші функції, що не стосуються UI ---
-    // getUidForPackage, getBatteryUsageAndTime, calculatePercentage,
-    // parseTimeFromHmsMs, formatBatteryTimeMs, getAppInfo, readCmdline,
-    // getIconFromApk, etc.
-    // Важливо: переконайтеся, що вони використовують `this` або `applicationContext`
-    // коректно, якщо це необхідно.
 
     // Приклад переносу однієї функції:
     private suspend fun getAppInfo(pid: String, cmd: String): Pair<String?, Drawable?> = withContext(Dispatchers.IO) {
@@ -191,7 +182,6 @@ class ProcessDetailActivity : AppCompatActivity(), ProcessInfoFragment.OnUserSel
         }
     }
 
-    // ... (додайте решту ваших функцій: getUidForPackage, getBatteryUsageAndTime, etc.) ...
     private fun getUidForPackage(packageName: String): String? {
         return try {
             val process = Runtime.getRuntime().exec("su -c pm list packages -U")

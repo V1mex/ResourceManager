@@ -17,6 +17,7 @@ import kotlinx.coroutines.*
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import android.app.Dialog
+import android.content.pm.PackageManager
 import android.widget.Button
 import android.widget.TextView
 import androidx.lifecycle.lifecycleScope
@@ -69,6 +70,16 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         mylayout = ActivityMainBinding.inflate(layoutInflater)
         setContentView(mylayout.root)
+        //mylayout.versionLabel.text=
+
+        try {
+            val packageInfo = packageManager.getPackageInfo(packageName, 0)
+            val versionName = packageInfo.versionName
+            mylayout.versionLabel.text = "| v$versionName"
+        } catch (e: PackageManager.NameNotFoundException) {
+            mylayout.versionLabel.text = "| vError"
+            e.printStackTrace()
+        }
 
         mylayout.checkUpdates.setOnClickListener {
             lifecycleScope.launch {

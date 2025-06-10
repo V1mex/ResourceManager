@@ -2,6 +2,7 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.ksp) //!!!
 }
 
 android {
@@ -16,8 +17,8 @@ android {
         applicationId = "com.example.resourcemanager"
         minSdk = 33
         targetSdk = 35
-        versionCode = 2
-        versionName = "1.1"
+        versionCode = 2 //increase?
+        versionName = "1.2" //increase
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -70,4 +71,17 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.9.0")
     implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
 
+    val room_version = "2.7.1"
+    implementation("androidx.room:room-runtime:$room_version")
+    implementation("androidx.room:room-ktx:$room_version")
+    ksp("androidx.room:room-compiler:$room_version")
+    annotationProcessor("androidx.room:room-compiler:$room_version")
 }
+
+/*configurations.all {
+    resolutionStrategy{
+        force("org.jetbeains.kotlin:kotlin-stdlib:1.9.10")
+        force("org.jetbeains.kotlin:kotlin-stdlib-jdk7:1.9.10")
+        force("org.jetbeains.kotlin:kotlin-stdlib-jdk8:1.9.10")
+    }
+}*/

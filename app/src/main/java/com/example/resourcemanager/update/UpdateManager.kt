@@ -21,15 +21,6 @@ class UpdateManager(
     private val owner = "V1mex"
     private val repo = "resourcemanager"
 
-    /*private val service: GitHubService by lazy {
-        Retrofit.Builder()
-            .baseUrl("https://api.github.com/")
-            .client(OkHttpClient.Builder().build())
-            .addConverterFactory(GsonConverterFactory.create())
-            .build()
-            .create(GitHubService::class.java)
-    }*/
-
     private val service: GitHubService by lazy {
         // створюємо логінг-інтерцептор
         val logging = HttpLoggingInterceptor().apply {
@@ -54,12 +45,16 @@ class UpdateManager(
             val latestTag = release.tag_name
 
             if (isNewer(currentVersion, latestTag)) {
-                // беремо перший asset, або можете обрати по розширенню .apk
                 val apkAsset = release.assets.firstOrNull { it.name.endsWith(".apk") }
-                    ?: release.assets.firstOrNull()
-                    ?: throw IllegalStateException("No downloadable assets found")
+                    ?: throw IllegalStateException("No downloadable apk found")
 
                 enqueueDownload(apkAsset.browser_download_url, apkAsset.name)
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(
+                        context, "Завантаження розпочалося...",
+                        Toast.LENGTH_LONG
+                    ).show()
+                    }
             } else {
                 withContext(Dispatchers.Main) {
                     Toast.makeText(
